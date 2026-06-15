@@ -87,7 +87,51 @@ func (a *Agent) buildToolDefs() []llm.ToolDef {
 	return defs
 }
 
-// executeToolCall 桩实现（T9 替换为真实逻辑）。
+// executeToolCall 执行单次工具调用，受 Policy 约束。
 func (a *Agent) executeToolCall(ctx context.Context, call conversation.ToolCall, sink EventSink) error {
-	return fmt.Errorf("tool execution not implemented (V1)")
+	if sink != nil {
+		sink(LoopEvent{Kind: LoopToolCallStart, ToolCall: &call})
+		defer func() {
+			sink(LoopEvent{Kind: LoopToolCallEnd, ToolCall: &call})
+		}()
+	}
+
+	t, ok := a.tools.Get(call.Name)
+	if !ok {
+		a.history.AppendToolResult(call.ID, call.Name, "未知工具: "+call.Name, true)
+		return nil
+	}
+
+	if a.policy.Confirm != nil {
+		approved, err := a.policy.Confirm(call)
+		if err != nil {
+			return fmt.Errorf("confirm %s: %w", call.Name, err)
+		}
+		if !approved {
+			a.history.AppendToolResult(call.ID, call.Name, "用户拒绝执行此工具调用", true)
+			return nil
+		}
+	}
+
+	events, err := t.Execute(ctx, call.Args)
+	if err != nil {
+		a.history.AppendToolResult(call.ID, call.Name, "执行失败: "+err.Error(), true)
+		return nil
+	}
+
+	for ev := range events {
+		switch ev.Kind {
+		case tool.EventDelta, tool.EventProgress:
+			if sink != nil {
+				sink(ProgressEvent(ev.Text))
+			}
+		case tool.EventResult:
+			if ev.Result != nil {
+				a.history.AppendToolResult(call.ID, call.Name, ev.Result.Content, ev.Result.IsError)
+			}
+		case tool.EventError:
+			a.history.AppendToolResult(call.ID, call.Name, ev.Text, true)
+		}
+	}
+	return nil
 }
