@@ -1,12 +1,5 @@
 # AgentForge 总体实施计划 (plan.md)
 
-> **本文档是 AgentForge 项目的唯一权威实施计划**，由以下文档合并而成：
-> - `agent-desktop-demo-技术栈与实现方案.md`（项目总体技术方案 / 背景）
-> - `2026-06-15-tool-abstraction-and-agent-loop-plan.md`（Tool 抽象层 + Agent Loop，原 Task 1-11）
-> - `rag.md`（RAG 功能设计 spec）
-> - `rag-plan.md`（RAG 实施计划，原 Task 1-28）
->
-> **任务编号已全局重排，从 T1 连续递增到 T39**，消除原两份计划的编号冲突。
 >
 > **执行顺序：** 严格按 T1 → T39 顺序执行。每个 Task 都是 TDD 五步循环（写失败测试 → 确认失败 → 实现 → 确认通过 → 提交）。每个里程碑（Phase）结束有检查点。
 
