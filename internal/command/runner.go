@@ -45,11 +45,21 @@ func (r *Runner) Run(ctx context.Context, spec CommandSpec) (<-chan tool.Event, 
 		}
 
 		scanner := bufio.NewScanner(stdoutPipe)
+		// 默认 64KB 行长上限对 V1 的系统信息命令足够；超大行会被截断。
+		// 若未来白名单命令产出超长行，调大 scanner.Buffer 并检查 scanner.Err()。
+		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		var collected bytes.Buffer
 		for scanner.Scan() {
 			line := scanner.Text()
 			ch <- tool.Event{Kind: tool.EventDelta, Text: line}
 			collected.WriteString(line + "\n")
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+				Content: "读取输出失败: " + scanErr.Error(),
+				IsError: true,
+			}}
+			return
 		}
 
 		if err := cmd.Wait(); err != nil {
