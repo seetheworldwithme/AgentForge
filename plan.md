@@ -2476,6 +2476,646 @@ git commit -m "test(agent): add end-to-end integration test for full agent loop"
 
 ---
 
+# 第二部分补充：Phase 1.5 —— 集成层（让程序真正跑起来）
+
+> **范围：** T11.5 - T11.6。在 Phase 1（T1-T11）之后、Phase 2（RAG）之前，补上两块"胶水"：真实 OpenAI Provider 与 CLI 入口。完成后程序可真正运行，满足第一部分 §1 的 V1 成功标准。
+>
+> **为什么需要这一节：** Phase 1 只建了接口与 Fake 实现（T4/T5/T7），没有真实 Provider；也没有任何 Task 把 `internal/*` 接成能跑的入口。这导致跑完 T1-T11 后程序仍无法真正对话。Phase 1.5 把孤岛接起来。
+
+## T11.5：OpenAI Provider（真实实现）
+
+**目标：** 实现真正能调用 OpenAI 兼容 Chat Completions API 的 `OpenAIProvider`：流式 SSE 解析、tool_calls delta 复用 T5 的 accumulator、错误处理（401/429/网络）、非流式降级。填补 Phase 1 仅有接口没有真实实现的缺口。
+
+**依赖：** T3（conversation.Message）、T4（Provider/Request/Response/ToolDef）、T5（accumulator）。
+
+**Files:**
+- Create: `internal/llm/openai.go`
+- Create: `internal/llm/openai_test.go`
+
+**关键技术决策：**
+- `net/http` + `bufio.Scanner` 解析 `data: {...}` SSE 帧（第一部分 §5 指定）。
+- tool_calls delta 用 T5 的 `newToolCallAccumulator`（已有，直接复用，不重写）。
+- 内部 `chatRequest`/`wireMessage` 结构与 `conversation.Message` 字段名不同（`function`/`arguments`）——在 Provider 内做 **内部模型 ↔ 线上格式** 映射，印证 T3 给 ToolCall 加的 godoc TODO。
+- API key 仅走 header `Authorization: Bearer`，不进 URL query、不进日志（第一部分 §10 安全基线）。
+- 非流式降级：当 `req.OnDelta == nil` 时不设 `stream:true`，直接读完整 JSON。
+- string → json.RawMessage 转换：`json.RawMessage` 是 `[]byte` 的类型别名，可直接从 string 显式转换 `json.RawMessage(s)`。OpenAI 的 `function.arguments` 是 string 编码的 JSON，转成 `json.RawMessage` 后可直接回填给内部模型，无需二次解析。
+
+- [ ] **Step 1: 添加依赖**（无新依赖，纯标准库）
+
+- [ ] **Step 2: 写失败测试（httptest mock）**
+
+Create `internal/llm/openai_test.go`:
+```go
+package llm
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/agentforge/agentforge/internal/conversation"
+)
+
+// TestOpenAIProvider_StreamsDeltas 验证 SSE 逐 token 推送到 OnDelta，
+// 且 Response.Message.Content 为完整文本。
+func TestOpenAIProvider_StreamsDeltas(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer sk-fake" {
+			t.Errorf("missing/invalid auth header: %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		// 模拟两帧 SSE：分片输出 "你好"
+		chunks := []string{`{"choices":[{"delta":{"content":"你"}}]}`,
+			`{"choices":[{"delta":{"content":"好"}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"stop"}]}`}
+		for _, c := range chunks {
+			w.Write([]byte("data: " + c + "\n\n"))
+		}
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(srv.URL, "sk-fake", "gpt-4o-mini")
+	var collected string
+	resp, err := p.ChatStream(context.Background(), Request{
+		Messages: []conversation.Message{{Role: conversation.RoleUser, Content: "hi"}},
+		OnDelta:  func(s string) { collected += s },
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if collected != "你好" {
+		t.Errorf("deltas got %q, want 你好", collected)
+	}
+	if resp.Message.Content != "你好" {
+		t.Errorf("message content got %q, want 你好", resp.Message.Content)
+	}
+	if resp.Message.Role != conversation.RoleAssistant {
+		t.Errorf("role got %s, want assistant", resp.Message.Role)
+	}
+}
+
+// TestOpenAIProvider_AccumulatesToolCalls 验证分片 tool_calls delta 被正确累积。
+func TestOpenAIProvider_AccumulatesToolCalls(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		frames := []string{
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_system_info","arguments":"{\"q\":\""}}]}}]}`,
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"info\"}"}}]}}]}`,
+			`{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		}
+		for _, f := range frames {
+			w.Write([]byte("data: " + f + "\n\n"))
+		}
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(srv.URL, "sk-fake", "gpt-4o-mini")
+	resp, err := p.ChatStream(context.Background(), Request{
+		Tools: []ToolDef{{Name: "get_system_info", Description: "x", Schema: []byte(`{}`)}},
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if len(resp.Message.ToolCalls) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(resp.Message.ToolCalls))
+	}
+	tc := resp.Message.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "get_system_info" {
+		t.Errorf("unexpected tool call: %+v", tc)
+	}
+	if string(tc.Args) != `{"q":"info"}` {
+		t.Errorf("accumulated args got %q", string(tc.Args))
+	}
+}
+
+// TestOpenAIProvider_ApiError 验证 401 返回明确错误。
+func TestOpenAIProvider_ApiError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"message": "Invalid API key"},
+		})
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(srv.URL, "sk-fake", "gpt-4o-mini")
+	_, err := p.ChatStream(context.Background(), Request{OnDelta: func(string) {}})
+	if err == nil {
+		t.Fatal("expected error for 401")
+	}
+}
+
+// TestOpenAIProvider_NonStreamingFallback 验证 OnDelta==nil 时走非流式。
+func TestOpenAIProvider_NonStreamingFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req map[string]any
+		json.NewDecoder(r.Body).Decode(&req)
+		if stream, ok := req["stream"].(bool); ok && stream {
+			t.Error("non-streaming request should not set stream:true")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{
+				{"message": map[string]any{"role": "assistant", "content": "完整回复"},
+				 "finish_reason": "stop"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	p := NewOpenAIProvider(srv.URL, "sk-fake", "gpt-4o-mini")
+	resp, err := p.ChatStream(context.Background(), Request{
+		Messages: []conversation.Message{{Role: conversation.RoleUser, Content: "hi"}},
+		// OnDelta 故意不设
+	})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if resp.Message.Content != "完整回复" {
+		t.Errorf("got %q", resp.Message.Content)
+	}
+}
+```
+
+- [ ] **Step 3: 运行测试确认失败**
+
+Run: `go test ./internal/llm/ -run TestOpenAIProvider -v`
+Expected: 编译失败 —— `NewOpenAIProvider` 未定义。
+
+- [ ] **Step 4: 实现 openai.go**
+
+Create `internal/llm/openai.go`:
+```go
+package llm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	"github.com/agentforge/agentforge/internal/conversation"
+)
+
+// OpenAIProvider 调用 OpenAI 兼容 Chat Completions API。
+// 流式优先（SSE），OnDelta 为 nil 时降级为非流式。
+type OpenAIProvider struct {
+	baseURL string
+	apiKey  string
+	model   string
+	client  *http.Client
+}
+
+func NewOpenAIProvider(baseURL, apiKey, model string) *OpenAIProvider {
+	return &OpenAIProvider{
+		baseURL: baseURL, apiKey: apiKey, model: model,
+		client: &http.Client{},
+	}
+}
+
+// 线上格式（OpenAI wire format）——与内部 conversation.Message 字段不同，
+// 在此 Provider 内做内部模型 ↔ 线上格式的映射。
+type wireMessage struct {
+	Role      string         `json:"role"`
+	Content   string         `json:"content,omitempty"`
+	ToolCalls []wireToolCall `json:"tool_calls,omitempty"`
+}
+type wireToolCall struct {
+	Index    int          `json:"index"`
+	ID       string       `json:"id,omitempty"`
+	Type     string       `json:"type,omitempty"`
+	Function wireFunction `json:"function"`
+}
+type wireFunction struct {
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"` // OpenAI 用 string 编码的 JSON
+}
+
+type chatRequest struct {
+	Model    string        `json:"model"`
+	Messages []wireMessage `json:"messages"`
+	Tools    []wireToolDef `json:"tools,omitempty"`
+	Stream   bool          `json:"stream,omitempty"`
+}
+type wireToolDef struct {
+	Type     string  `json:"type"` // 固定 "function"
+	Function ToolDef `json:"function"`
+}
+
+// toWire 把内部 conversation.Message 转为线上格式。
+func toWire(msg conversation.Message) wireMessage {
+	wm := wireMessage{Role: string(msg.Role), Content: msg.Content}
+	for _, tc := range msg.ToolCalls {
+		wm.ToolCalls = append(wm.ToolCalls, wireToolCall{
+			ID: tc.ID, Type: "function",
+			Function: wireFunction{Name: tc.Name, Arguments: string(tc.Args)},
+		})
+	}
+	return wm
+}
+
+func (p *OpenAIProvider) ChatStream(ctx context.Context, req Request) (*Response, error) {
+	streaming := req.OnDelta != nil
+	body := chatRequest{
+		Model: p.model, Stream: streaming,
+		Tools: toWireToolDefs(req.Tools),
+	}
+	for _, m := range req.Messages {
+		body.Messages = append(body.Messages, toWire(m))
+	}
+	raw, _ := json.Marshal(body)
+
+	httpReq, err := http.NewRequestWithContext(ctx, "POST",
+		strings.TrimRight(p.baseURL, "/")+"/chat/completions", bytes.NewReader(raw))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	if streaming {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.mapAPIError(resp)
+	}
+
+	if streaming {
+		return p.readStream(resp.Body, req.OnDelta)
+	}
+	return p.readFull(resp.Body)
+}
+
+func (p *OpenAIProvider) mapAPIError(resp *http.Response) error {
+	msg := fmt.Sprintf("api status %d", resp.StatusCode)
+	switch resp.StatusCode {
+	case http.StatusUnauthorized:
+		msg = "api_key 无效（401）"
+	case http.StatusTooManyRequests:
+		msg = "被限流（429），请稍后重试"
+	}
+	return fmt.Errorf("%s", msg)
+}
+
+// readStream 逐帧解析 SSE，累积 content 与 tool_calls。
+func (p *OpenAIProvider) readStream(r io.Reader, onDelta func(string)) (*Response, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var contentBuilder strings.Builder
+	acc := newToolCallAccumulator()
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		data := strings.TrimPrefix(line, "data: ")
+		if data == "[DONE]" {
+			break
+		}
+		var frame struct {
+			Choices []struct {
+				Delta struct {
+					Content   string `json:"content"`
+					ToolCalls []struct {
+						Index    int    `json:"index"`
+						ID       string `json:"id,omitempty"`
+						Function struct {
+							Name      string `json:"name,omitempty"`
+							Arguments string `json:"arguments,omitempty"`
+						} `json:"function"`
+					} `json:"tool_calls,omitempty"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason,omitempty"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &frame); err != nil {
+			continue // 跳过无法解析的帧
+		}
+		for _, ch := range frame.Choices {
+			if ch.Delta.Content != "" {
+				contentBuilder.WriteString(ch.Delta.Content)
+				if onDelta != nil {
+					onDelta(ch.Delta.Content)
+				}
+			}
+			for _, tc := range ch.Delta.ToolCalls {
+				acc.add(deltaChunk{
+					Index:         tc.Index,
+					ID:            tc.ID,
+					FunctionName:  tc.Function.Name,
+					ArgumentsFrag: tc.Function.Arguments,
+				})
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read stream: %w", err)
+	}
+
+	msg := conversation.Message{
+		Role:    conversation.RoleAssistant,
+		Content: contentBuilder.String(),
+	}
+	for _, ec := range acc.result() {
+		msg.ToolCalls = append(msg.ToolCalls, conversation.ToolCall{
+			ID: ec.ID, Name: ec.Name, Args: json.RawMessage(ec.Args),
+		})
+	}
+	return &Response{Message: msg}, nil
+}
+
+// readFull 非流式：一次性读完整 JSON。
+func (p *OpenAIProvider) readFull(r io.Reader) (*Response, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	var fr struct {
+		Choices []struct {
+			Message wireMessage `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(raw, &fr); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	if len(fr.Choices) == 0 {
+		return nil, fmt.Errorf("no choices in response")
+	}
+	wm := fr.Choices[0].Message
+	msg := conversation.Message{Role: conversation.Role(wm.Role), Content: wm.Content}
+	for _, tc := range wm.ToolCalls {
+		msg.ToolCalls = append(msg.ToolCalls, conversation.ToolCall{
+			ID:   tc.ID,
+			Name: tc.Function.Name,
+			Args: json.RawMessage(tc.Function.Arguments),
+		})
+	}
+	return &Response{Message: msg}, nil
+}
+
+func toWireToolDefs(defs []ToolDef) []wireToolDef {
+	if len(defs) == 0 {
+		return nil
+	}
+	out := make([]wireToolDef, len(defs))
+	for i, d := range defs {
+		out[i] = wireToolDef{Type: "function", Function: d}
+	}
+	return out
+}
+```
+
+- [ ] **Step 5: 运行测试确认通过**
+
+Run: `go test ./internal/llm/ -v`
+Expected: T5/T7 的 7 个 + T11.5 的 4 个，共 11 个全部 PASS。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add internal/llm/openai.go internal/llm/openai_test.go
+git commit -m "feat(llm): add OpenAIProvider with streaming SSE and tool_calls accumulation"
+```
+
+---
+
+## T11.6：CLI 入口（main.go）
+
+**目标：** 写 `cmd/cli/main.go`，把 `internal/*` 接起来，满足第一部分 §1 的 V1 成功标准：`agentforge chat "你好"` 流式对话、`agentforge run <command>` 执行白名单命令。填补 Phase 1 没有入口的缺口。
+
+**依赖：** T8-T10（Agent/Policy/registry）、T11.5（OpenAIProvider）。
+
+**Files:**
+- Create: `cmd/cli/main.go`
+
+**关键技术决策：**
+- CLI 框架：**cobra**（第一部分 §9 明确指定）。引入 `github.com/spf13/cobra`。
+- 配置来源：先从环境变量读（`AGENTFORGE_BASE_URL`/`AGENTFORGE_API_KEY`/`AGENTFORGE_MODEL`），缺省回退 `~/.agentforge/config.json`。V1 不实现 SecureStorage 加密文件（第一部分 §10 是 GUI 才系统 Keychain，CLI 用文件），但留 TODO。
+- api_key **绝不**进日志、不进命令行参数（会进进程列表，不安全）——只从 env/配置文件读。
+- `chat` 命令：组装 provider + registry.Default() + conversation.Manager + Agent(Policy{AllowToolCalls:false})，调 `agent.Run`，sink 把 LoopDelta 写 stdout。
+- `run` 命令：从 registry 取工具，直接 `Execute`，把 delta 流式打印。
+- 成功标准（第一部分 §1）：需真实 api_key 才能验证；CI 无法验证，但 httptest 单测（T11.5）能覆盖 Provider 逻辑。CLI 层是薄壳，不写重复单测（YAGNI，符合 CLAUDE.md §2）。
+
+- [ ] **Step 1: 添加依赖**
+
+```bash
+go get github.com/spf13/cobra@latest
+```
+
+- [ ] **Step 2: 写 main.go**
+
+Create `cmd/cli/main.go`:
+```go
+// Package main 是 agentforge CLI 入口。
+// 组装 internal/* 共享核心，提供 chat / run 子命令。
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+
+	"github.com/spf13/cobra"
+
+	"github.com/agentforge/agentforge/internal/agent"
+	"github.com/agentforge/agentforge/internal/conversation"
+	"github.com/agentforge/agentforge/internal/llm"
+	registrypkg "github.com/agentforge/agentforge/internal/registry"
+	"github.com/agentforge/agentforge/internal/tool"
+)
+
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func newRootCmd() *cobra.Command {
+	root := &cobra.Command{
+		Use:   "agentforge",
+		Short: "AgentForge - 跨平台智能 Agent 工具",
+	}
+	root.AddCommand(newChatCmd(), newRunCmd())
+	return root
+}
+
+// config 从环境变量读，缺省回退到 ~/.agentforge/config.json。
+// api_key 绝不进命令行参数或日志。
+type config struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
+func loadConfig() (config, error) {
+	cfg := config{
+		BaseURL: os.Getenv("AGENTFORGE_BASE_URL"),
+		APIKey:  os.Getenv("AGENTFORGE_API_KEY"),
+		Model:   os.Getenv("AGENTFORGE_MODEL"),
+	}
+	if cfg.BaseURL == "" {
+		cfg.BaseURL = "https://api.openai.com/v1"
+	}
+	if cfg.Model == "" {
+		cfg.Model = "gpt-4o-mini"
+	}
+	// 回退配置文件（api_key 优先用 env）
+	path := configPath()
+	if data, err := os.ReadFile(path); err == nil {
+		var fc config
+		if json.Unmarshal(data, &fc) == nil {
+			if cfg.BaseURL == "" {
+				cfg.BaseURL = fc.BaseURL
+			}
+			if cfg.APIKey == "" {
+				cfg.APIKey = fc.APIKey
+			}
+			if cfg.Model == "" {
+				cfg.Model = fc.Model
+			}
+		}
+	}
+	// TODO(secure storage): V2 接入系统 Keychain / 加密文件
+	return cfg, nil
+}
+
+func configPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		dir = "."
+	}
+	return filepath.Join(dir, "agentforge", "config.json")
+}
+
+func newChatCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "chat [message]",
+		Short: "与 Agent 对话（流式输出）",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return err
+			}
+			if cfg.APIKey == "" {
+				return fmt.Errorf("api_key 未配置：设置 AGENTFORGE_API_KEY 环境变量或写入 %s", configPath())
+			}
+			provider := llm.NewOpenAIProvider(cfg.BaseURL, cfg.APIKey, cfg.Model)
+			registry := registrypkg.Default()
+			mgr := conversation.NewManager()
+			a := agent.NewAgent(provider, registry, mgr, agent.Policy{AllowToolCalls: false})
+
+			sink := func(ev agent.LoopEvent) {
+				if ev.Kind == agent.LoopDelta {
+					fmt.Fprint(os.Stdout, ev.Text)
+				}
+			}
+			return a.Run(context.Background(), args[0], sink)
+		},
+	}
+}
+
+func newRunCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "run <command> [args]",
+		Short: "执行白名单命令",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			registry := registrypkg.Default()
+			t, ok := registry.Get(args[0])
+			if !ok {
+				list := listToolNames(registry)
+				return fmt.Errorf("未知命令 %q；可用：%v", args[0], list)
+			}
+			callArgs := []byte(`{}`)
+			if len(args) > 1 {
+				callArgs = []byte(args[1])
+			}
+			events, err := t.Execute(context.Background(), callArgs)
+			if err != nil {
+				return err
+			}
+			for ev := range events {
+				switch ev.Kind {
+				case tool.EventDelta, tool.EventProgress:
+					fmt.Fprintln(os.Stdout, ev.Text)
+				case tool.EventResult:
+					if ev.Result != nil {
+						io.WriteString(os.Stdout, ev.Result.Content)
+					}
+				case tool.EventError:
+					fmt.Fprintln(os.Stderr, "error:", ev.Text)
+				}
+			}
+			return nil
+		},
+	}
+}
+
+func listToolNames(r *tool.Registry) []string {
+	tools := r.List()
+	names := make([]string, 0, len(tools))
+	for _, t := range tools {
+		names = append(names, t.Name())
+	}
+	return names
+}
+```
+
+- [ ] **Step 3: 验证编译 + 构建 CLI 二进制**
+
+```bash
+go build -o /tmp/agentforge.exe ./cmd/cli
+go vet ./cmd/cli/
+```
+Expected: 无输出（成功）。二进制生成。
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add cmd/cli/main.go go.mod go.sum
+git commit -m "feat(cli): add agentforge CLI entrypoint with chat and run commands"
+```
+
+---
+
+### Phase 1.5 检查点
+
+完成 T11.5 + T11.6 后，**程序可真正运行**（满足第一部分 §1 的 V1 成功标准）：
+
+| 验收 | 方式 |
+|------|------|
+| `go build ./...` 全绿 | `go build ./...` |
+| 单测全绿 | `go test ./...` |
+| CLI 能真实对话（需 api_key） | `AGENTFORGE_API_KEY=sk-xxx go run ./cmd/cli chat "你好"` 应流式输出 |
+| CLI 能跑白名单命令 | `go run ./cmd/cli run get_system_info` 应打印系统信息 |
+
+**Phase 1.5 不包含：** SecureStorage 加密文件（V2）、交互式 readline、GUI、RAG。
+
+---
+
 # 第三部分：RAG 功能设计 spec
 
 > 本部分是 RAG 功能的设计决策记录，是第四部分实施计划的依据。
@@ -6438,16 +7078,267 @@ wails build
 
 ---
 
+## T39.5：知识库检索工具（RAG ↔ Agent Loop 集成）
+
+**目标：** 把 RAG 检索封装为实现 `tool.Tool` 的 `KnowledgeBaseTool`，注册进 Registry。模型可通过 function calling 查知识库 → 拿 top-k chunk → 据此回答。**打通对话引擎与 RAG 两条平行线**——这是 Phase 1（对话引擎）与 Phase 2（RAG）最终汇合的集成点。
+
+**插入此处的理由：** Phase 1 与 Phase 2 在 T1-T39 内一直是两条平行线（对话引擎用 `llm.Provider` + Agent Loop；RAG 自包含用 Service + Retriever）。直到 RAG 完整可用（T27 Service、T25 Retriever）之后，才能把检索能力作为工具接入对话循环。本 Task 依赖 T2/T10（tool.Tool）、T25（Retriever）、T27（Service）。
+
+**Files:**
+- Create: `internal/rag/tool.go`
+- Create: `internal/rag/tool_test.go`
+- Modify: `internal/registry/registry.go`（新增 `SetupWithRAG`，不改 `Setup`）
+- Modify: `internal/registry/registry_test.go`（追加测试）
+
+**关键技术决策：**
+- `rag.Service` 已提供 `Retrieve(kbID, query, topK) ([]ScoredChunk, error)`（T27）。KnowledgeBaseTool 持有 `*rag.Service` + 目标 `kbID` + `topK`。
+- Schema 让模型知道参数：`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`。
+- Execute 把 top-k chunk 拼成 `HeadingPath + Content` 文本（第三部分 R.3：喂 LLM 的是 HeadingPath+Content），作为 `Result.Content` 回填。非致命错误（store 失败、参数错误）走 `IsError:true` 不崩 Loop（呼应 T9 的非致命错误处理）。
+- 注册时机：`internal/registry` 当前的 `Setup(r *tool.Registry)` 签名无法传 ragService。决策：新增 `SetupWithRAG(r, ragSvc, kbID)`，`Default()` 不变（无 RAG 时仍用）。这样不破坏 T10 已有签名与测试。
+
+- [ ] **Step 1: 写失败测试**
+
+Create `internal/rag/tool_test.go`:
+```go
+package rag
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/agentforge/agentforge/internal/rag/embedder"
+	"github.com/agentforge/agentforge/internal/tool"
+)
+
+func TestKnowledgeBaseTool_RetrievesAndFormats(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	svc, err := NewService(ServiceConfig{
+		DBPath: dbPath, EmbedDim: 32,
+		Embedder: &embedder.FakeEmbedder{Dim: 32}, EmbeddingModel: "fake",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer svc.Close()
+	kbID, _ := svc.CreateKnowledgeBase("test", 512, 50)
+
+	mdPath := filepath.Join(t.TempDir(), "note.md")
+	os.WriteFile(mdPath, []byte("# 安装\n\n用 brew 安装 agentforge。"), 0644)
+	svc.ImportDocument(kbID, mdPath)
+
+	kbTool := NewKnowledgeBaseTool(svc, kbID, 3)
+	if kbTool.Name() != "search_knowledge_base" {
+		t.Errorf("name got %q", kbTool.Name())
+	}
+
+	events, err := kbTool.Execute(context.Background(), []byte(`{"query":"安装"}`))
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var resultContent string
+	var isError bool
+	for ev := range events {
+		if ev.Kind == tool.EventResult && ev.Result != nil {
+			resultContent = ev.Result.Content
+			isError = ev.Result.IsError
+		}
+	}
+	if isError {
+		t.Error("expected successful result")
+	}
+	if resultContent == "" {
+		t.Fatal("expected non-empty result content")
+	}
+}
+
+func TestKnowledgeBaseTool_InvalidArgs(t *testing.T) {
+	svc, _ := NewService(ServiceConfig{
+		DBPath: filepath.Join(t.TempDir(), "t.db"), EmbedDim: 32,
+		Embedder: &embedder.FakeEmbedder{Dim: 32}, EmbeddingModel: "fake",
+	})
+	defer svc.Close()
+	kbTool := NewKnowledgeBaseTool(svc, "kb1", 3)
+
+	events, _ := kbTool.Execute(context.Background(), []byte(`{bad json`))
+	foundError := false
+	for ev := range events {
+		if ev.Kind == tool.EventResult && ev.Result != nil && ev.Result.IsError {
+			foundError = true
+		}
+	}
+	if !foundError {
+		t.Error("expected error result for invalid args")
+	}
+}
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+Run: `go test ./internal/rag/ -run TestKnowledgeBaseTool -v`
+Expected: 编译失败 —— `NewKnowledgeBaseTool` 未定义。
+
+- [ ] **Step 3: 实现 tool.go**
+
+Create `internal/rag/tool.go`:
+```go
+package rag
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/agentforge/agentforge/internal/tool"
+)
+
+// KnowledgeBaseTool 把 RAG 检索暴露为一个 tool.Tool，
+// 让 Agent Loop 能通过 function calling 查知识库。
+type KnowledgeBaseTool struct {
+	svc  *Service
+	kbID string
+	topK int
+}
+
+func NewKnowledgeBaseTool(svc *Service, kbID string, topK int) *KnowledgeBaseTool {
+	if topK <= 0 {
+		topK = 5
+	}
+	return &KnowledgeBaseTool{svc: svc, kbID: kbID, topK: topK}
+}
+
+func (t *KnowledgeBaseTool) Name() string        { return "search_knowledge_base" }
+func (t *KnowledgeBaseTool) Description() string { return "在知识库中检索与问题相关的文档片段" }
+
+func (t *KnowledgeBaseTool) Schema() []byte {
+	return []byte(`{"type":"object","properties":{"query":{"type":"string","description":"检索问题"}},"required":["query"]}`)
+}
+
+func (t *KnowledgeBaseTool) Execute(ctx context.Context, args []byte) (<-chan tool.Event, error) {
+	ch := make(chan tool.Event)
+	go func() {
+		defer close(ch)
+
+		var p struct {
+			Query string `json:"query"`
+		}
+		if err := json.Unmarshal(args, &p); err != nil {
+			ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+				Content: "参数解析失败: " + err.Error(), IsError: true,
+			}}
+			return
+		}
+		if strings.TrimSpace(p.Query) == "" {
+			ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+				Content: "query 不能为空", IsError: true,
+			}}
+			return
+		}
+
+		chunks, err := t.svc.Retrieve(t.kbID, p.Query, t.topK)
+		if err != nil {
+			ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+				Content: "检索失败: " + err.Error(), IsError: true,
+			}}
+			return
+		}
+		if len(chunks) == 0 {
+			ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+				Content: "知识库中未找到相关内容",
+			}}
+			return
+		}
+
+		ch <- tool.Event{Kind: tool.EventResult, Result: &tool.Result{
+			Content: formatChunks(chunks),
+		}}
+	}()
+	return ch, nil
+}
+
+// formatChunks 按 R.3 约定：喂 LLM 的是 HeadingPath + Content。
+func formatChunks(chunks []ScoredChunk) string {
+	var b strings.Builder
+	for i, c := range chunks {
+		if i > 0 {
+			b.WriteString("\n---\n")
+		}
+		if c.HeadingPath != "" {
+			fmt.Fprintf(&b, "[%s]\n", c.HeadingPath)
+		}
+		if c.Source != "" {
+			fmt.Fprintf(&b, "(来源: %s)\n", c.Source)
+		}
+		b.WriteString(c.Content)
+	}
+	return b.String()
+}
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+Run: `go test ./internal/rag/ -run TestKnowledgeBaseTool -v`
+Expected: 2 个测试 PASS。
+
+- [ ] **Step 5: 在 registry 包新增 SetupWithRAG**
+
+Modify `internal/registry/registry.go`，追加 import 与函数：
+```go
+import "github.com/agentforge/agentforge/internal/rag"
+
+// SetupWithRAG 注册内置工具 + 知识库检索工具。
+// ragSvc 为 nil 时等价于 Setup（无 RAG）。
+func SetupWithRAG(r *tool.Registry, ragSvc *rag.Service, kbID string) {
+	Setup(r)
+	if ragSvc != nil {
+		r.Register(rag.NewKnowledgeBaseTool(ragSvc, kbID, 5))
+	}
+}
+```
+
+追加测试到 `internal/registry/registry_test.go`:
+```go
+func TestSetupWithRAG_NoRAG(t *testing.T) {
+	r := tool.NewRegistry()
+	SetupWithRAG(r, nil, "")
+	// 无 RAG 时应等价于 Setup：有 get_system_info，无 search_knowledge_base
+	if _, ok := r.Get("get_system_info"); !ok {
+		t.Error("expected get_system_info registered")
+	}
+	if _, ok := r.Get("search_knowledge_base"); ok {
+		t.Error("search_knowledge_base should NOT be registered when ragSvc is nil")
+	}
+}
+```
+
+- [ ] **Step 6: 运行全量测试**
+
+Run: `go test ./...`
+Expected: 所有包 PASS。
+
+- [ ] **Step 7: 提交**
+
+```bash
+git add internal/rag/tool.go internal/rag/tool_test.go internal/registry/
+git commit -m "feat(rag): add KnowledgeBaseTool to integrate RAG retrieval into Agent Loop"
+```
+
+---
+
 # 全局里程碑与检查点总览
 
 | Phase | 任务 | 内容 | 检查点验证 |
 |-------|------|------|-----------|
 | **Phase 1** | T1-T11 | Tool 抽象 + Agent Loop + Command | `go test ./...` 全绿，集成测试通过 |
+| **Phase 1.5** | T11.5-T11.6 | 真实 OpenAI Provider + CLI 入口 | 程序可真实运行：`agentforge chat` 流式对话、`agentforge run` 跑白名单命令 |
 | **Phase 2A** | T12-T18 | RAG 存储层 + CRUD | 插入向量 + 余弦检索 + 知识库过滤 |
 | **Phase 2B** | T19-T27 | 切片器(MD) + 导入 + 检索 + Service | 导入 .md → 检索 → prompt 组装闭环 |
 | **Phase 2C** | T28-T30 | 评测 L1+L2 | 标注问题 → 跑评测 → 看指标 → 查历史 |
 | **Phase 2D** | T31-T34 | PDF/Office 切片 + L3 judge + 自动测试集 | 全格式 + LLM 评测可用 |
 | **GUI** | T35-T39 | Wails binding + 前端两页面 + 验收 | 桌面端可操作完整 demo |
+| **Phase 2 收尾** | T39.5 | RAG ↔ Agent Loop 集成 | 对话引擎能 function-call 查知识库再回答 |
 
 ---
 
@@ -6462,7 +7353,9 @@ wails build
 | 5 | 流式对话接入 | T35 `ChatWithRAG` | 依赖 `internal/llm/` 真实 Provider。Phase 1 仅有接口+Fake。RAG/评测功能不受影响，仅对话流推送待接入 |
 | 6 | embedding 维度跨模型不一致 | 运行时 | Service 初始化探测维度建库；跨模型检索需 binding 层校验并提示重建 |
 | 7 | T3 与 T6 的 Manager 演进 | T3→T6 | T3 先写简化版 ForRequest（直接返回），T6 替换为含压缩的版本。注意 T6 的 NewManager 签名已是 variadic opts |
+| 8 | Embedder 与 Provider 各自持 HTTP client，配置来源未统一 | T11.5, T23 | 低风险。T11.5 的 `loadConfig()` 统一了 Provider 的 config 来源；将来 `OpenAIEmbedder` 复用同一 config 是机械改动，接口不变。暂不处理 |
+| 9 | OpenAI SSE 帧格式与 httptest mock 不一致 | T11.5 | mock 可能与真实 API 有细微差异。Phase 1.5 检查点要求**真实 api_key 跑通** `agentforge chat` 才算过，确保对真实 API 兼容 |
 
 ---
 
-**文档结束。** 按顺序从 T1 执行到 T39，每个 Task 严格遵循 TDD 五步循环，每个 Phase 结束跑检查点。遇风险登记簿中的项优先验证。
+**文档结束。** 按顺序从 T1 执行到 T39.5，每个 Task 严格遵循 TDD 五步循环，每个 Phase 结束跑检查点。遇风险登记簿中的项优先验证。
