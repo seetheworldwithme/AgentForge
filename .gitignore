@@ -1,7 +1,8 @@
 # build artifacts
 /build/
 /dist/
-*.db
+/env/
+*.exe
 *.db-journal
 *.db-wal
 *.db-shm
