@@ -18,6 +18,9 @@ type Store struct {
 }
 
 func New(dbPath string, dim int) (*Store, error) {
+	if dim <= 0 {
+		return nil, fmt.Errorf("dim must be positive, got %d", dim)
+	}
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

@@ -31,3 +31,11 @@ func TestNew_CreatesSchemaAndLoadsVec(t *testing.T) {
 		}
 	}
 }
+
+func TestNew_RejectsNonPositiveDim(t *testing.T) {
+	for _, dim := range []int{0, -1} {
+		if _, err := New(filepath.Join(t.TempDir(), "t.db"), dim); err == nil {
+			t.Fatalf("expected error for dim=%d", dim)
+		}
+	}
+}
