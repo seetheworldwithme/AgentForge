@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS documents (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(
-    embedding float[%d]
+    embedding float[%d] distance_metric=cosine
 );
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL REFERENCES documents(id),
