@@ -21,25 +21,32 @@ type DB struct {
 // vecExtPath returns the platform-specific sqlite-vec extension path next to
 // the running binary (or test temp dir). Returns empty string if none exists.
 func vecExtPath() string {
+	// sqlite-vec ships the extension as vec0.<ext> (the vec0 module).
 	name := map[string]string{
-		"windows": "sqlite-vec.dll",
-		"darwin":  "sqlite-vec.dylib",
-		"linux":   "sqlite-vec.so",
+		"windows": "vec0.dll",
+		"darwin":  "vec0.dylib",
+		"linux":   "vec0.so",
 	}[runtime.GOOS]
 	if name == "" {
 		return ""
 	}
-	// search next to the executable first
-	if exe, err := os.Executable(); err == nil {
-		candidate := filepath.Join(filepath.Dir(exe), "ext", runtime.GOOS, name)
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
+	candidates := []string{}
+	// search relative to the working dir, walking up to 6 levels (finds the
+	// repo-root ext/ whether run from the repo root or from a package subdir
+	// during `go test`).
+	candidates = append(candidates, filepath.Join("ext", runtime.GOOS, name))
+	for dir, i := "..", 1; i <= 6; i++ {
+		candidates = append(candidates, filepath.Join(dir, "ext", runtime.GOOS, name))
+		dir = filepath.Join(dir, "..")
 	}
-	// also search relative to the working dir (useful in tests / dev)
-	candidate := filepath.Join("ext", runtime.GOOS, name)
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate
+	// then next to the executable (works for packaged builds)
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "ext", runtime.GOOS, name))
+	}
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
 	}
 	return ""
 }
