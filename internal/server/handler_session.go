@@ -18,6 +18,7 @@ func (h *SessionHandler) Routes(r chi.Router) {
 	r.Get("/sessions", h.list)
 	r.Post("/sessions", h.create)
 	r.Get("/sessions/{id}", h.get)
+	r.Put("/sessions/{id}", h.update)
 	r.Delete("/sessions/{id}", h.delete)
 	r.Get("/sessions/{id}/messages", h.messages)
 }
@@ -77,6 +78,30 @@ func (h *SessionHandler) get(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs, _ := h.DB.ListMessages(id)
 	writeJSON(w, http.StatusOK, map[string]any{"session": toSessionDTO(s), "messages": msgs})
+}
+
+func (h *SessionHandler) update(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var dto sessionDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if dto.Title == "" {
+		writeErr(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := h.DB.RenameSession(id, dto.Title, now); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s, err := h.DB.GetSession(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, toSessionDTO(s))
 }
 
 func (h *SessionHandler) delete(w http.ResponseWriter, r *http.Request) {

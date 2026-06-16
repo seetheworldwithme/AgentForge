@@ -115,6 +115,30 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 		defer resp.Body.Close()
 		sc := bufio.NewScanner(resp.Body)
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
+		// Tool-call arguments arrive fragmented across many delta chunks
+		// (e.g. '{"', '"command":"pwd"', '}'), each carrying only a piece of
+		// the function name/id or the arguments string. Emitting a Chunk per
+		// delta yields partial JSON the tool can't parse. Accumulate per
+		// tool-call index and emit one complete ToolCall when the turn ends.
+		type toolAccum struct {
+			id, name string
+			args     strings.Builder
+		}
+		pending := map[int]*toolAccum{}
+		order := []int{}
+		flushed := false
+		flush := func() {
+			if flushed {
+				return
+			}
+			flushed = true
+			for _, i := range order {
+				a := pending[i]
+				ch <- Chunk{ToolCall: &ToolCall{ID: a.id, Name: a.name, Args: a.args.String()}}
+			}
+		}
+
 		for sc.Scan() {
 			line := sc.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -122,14 +146,22 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 			}
 			data := strings.TrimPrefix(line, "data: ")
 			if data == "[DONE]" {
+				flush()
 				ch <- Chunk{Done: true}
 				return
 			}
 			var ev struct {
 				Choices []struct {
 					Delta struct {
-						Content   string        `json:"content"`
-						ToolCalls []rawToolCall `json:"tool_calls"`
+						Content string `json:"content"`
+						ToolCalls []struct {
+							Index    int    `json:"index"`
+							ID       string `json:"id"`
+							Function struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							} `json:"function"`
+						} `json:"tool_calls"`
 					} `json:"delta"`
 				} `json:"choices"`
 				Usage *struct {
@@ -144,11 +176,22 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 				if choice.Delta.Content != "" {
 					ch <- Chunk{Text: choice.Delta.Content}
 				}
-				if len(choice.Delta.ToolCalls) > 0 {
-					tc := choice.Delta.ToolCalls[0]
-					ch <- Chunk{ToolCall: &ToolCall{
-						ID: tc.ID, Name: tc.Function.Name, Args: tc.Function.Arguments,
-					}}
+				for _, tc := range choice.Delta.ToolCalls {
+					a, ok := pending[tc.Index]
+					if !ok {
+						a = &toolAccum{}
+						pending[tc.Index] = a
+						order = append(order, tc.Index)
+					}
+					if tc.ID != "" {
+						a.id = tc.ID
+					}
+					if tc.Function.Name != "" {
+						a.name = tc.Function.Name
+					}
+					if tc.Function.Arguments != "" {
+						a.args.WriteString(tc.Function.Arguments)
+					}
 				}
 			}
 			if ev.Usage != nil {
@@ -158,6 +201,8 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 				}}
 			}
 		}
+		// Stream ended without [DONE]; flush any accumulated tool calls.
+		flush()
 	}()
 	return ch, nil
 }

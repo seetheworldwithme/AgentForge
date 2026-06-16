@@ -62,6 +62,7 @@ export type ChatEventName =
   | 'tool_call'
   | 'confirm_req'
   | 'tool_result'
+  | 'title'
   | 'error'
   | 'done';
 

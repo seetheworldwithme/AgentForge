@@ -20,6 +20,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
@@ -47,9 +48,10 @@ func main() {
 	defer db.Close()
 
 	gate := tools.NewGate()
+	workDir := tools.NewWorkDir()
 	registry := tools.NewRegistry(
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
-		builtin.Grep{}, builtin.Bash{},
+		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
 	)
 	engine := tools.NewEngine(registry, gate)
 
@@ -67,7 +69,7 @@ func main() {
 
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: engine,
-		EmbedClient: embedClient, RAG: ragRetriever,
+		EmbedClient: embedClient, RAG: ragRetriever, WorkDir: workDir,
 	})
 
 	// Start the core HTTP server on a random loopback port. The frontend
@@ -101,10 +103,12 @@ func main() {
 			Assets: frontendFS,
 		},
 		OnStartup: func(ctx context.Context) {
-			// context kept for parity; the port is exposed via Bind.
-			_ = ctx
+			dialogBinder.ctx = ctx
 		},
-		Bind: []interface{}{&PortBinder{Port: port}},
+		Bind: []interface{}{
+			&PortBinder{Port: port},
+			dialogBinder,
+		},
 	})
 	if err != nil {
 		log.Fatalf("wails: %v", err)
@@ -118,6 +122,25 @@ type PortBinder struct {
 }
 
 func (p *PortBinder) GetPort() int { return p.Port }
+
+// dialogBinder exposes a native directory picker to the frontend via a Wails
+// binding: window.go.main.DialogBinder.OpenDirectory(). Returns "" when the
+// user cancels. Only available in the Wails (production) build; in dev mode
+// the frontend falls back to a text input.
+var dialogBinder = &DialogBinder{}
+
+type DialogBinder struct {
+	ctx context.Context
+}
+
+func (d *DialogBinder) OpenDirectory() (string, error) {
+	if d.ctx == nil {
+		return "", nil
+	}
+	return runtime.OpenDirectoryDialog(d.ctx, runtime.OpenDialogOptions{
+		Title: "选择工作目录",
+	})
+}
 
 func defaultDataDir() string {
 	base, err := os.UserConfigDir()

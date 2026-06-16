@@ -11,7 +11,9 @@ import (
 	"github.com/agent-rust/core/internal/tools"
 )
 
-type Bash struct{}
+type Bash struct {
+	WorkDir *tools.WorkDir // optional; when set, commands run in this directory
+}
 
 func (Bash) Spec() tools.Spec {
 	return tools.Spec{
@@ -24,7 +26,7 @@ func (Bash) Spec() tools.Spec {
 	}
 }
 
-func (Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (tools.Result, error) {
+func (b Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (tools.Result, error) {
 	var p struct {
 		Command string `json:"command"`
 		Timeout int    `json:"timeout"`
@@ -51,6 +53,12 @@ func (Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (too
 		cmd = exec.CommandContext(ctx, "cmd", "/c", p.Command)
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", p.Command)
+	}
+	// Run in the user-selected working directory if one is set.
+	if b.WorkDir != nil {
+		if dir := b.WorkDir.Get(); dir != "" {
+			cmd.Dir = dir
+		}
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

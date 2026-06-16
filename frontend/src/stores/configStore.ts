@@ -7,6 +7,7 @@ interface ConfigState {
   loaded: boolean;
   load: () => Promise<void>;
   create: (p: Omit<Provider, 'id'>) => Promise<void>;
+  update: (id: string, p: Omit<Provider, 'id'>) => Promise<void>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -16,6 +17,10 @@ export const useConfigStore = create<ConfigState>((set, get) => ({
   load: async () => set({ providers: await api.listProviders(), loaded: true }),
   create: async (p) => {
     await api.createProvider(p);
+    await get().load();
+  },
+  update: async (id, p) => {
+    await api.updateProvider(id, p);
     await get().load();
   },
   remove: async (id) => {

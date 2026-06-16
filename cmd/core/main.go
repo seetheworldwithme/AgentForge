@@ -19,7 +19,7 @@ import (
 
 func main() {
 	dataDir := flag.String("data", defaultDataDir(), "data directory")
-	addr := flag.String("addr", "127.0.0.1:0", "listen address")
+	addr := flag.String("addr", "127.0.0.1:7777", "listen address")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
@@ -32,9 +32,10 @@ func main() {
 	defer db.Close()
 
 	gate := tools.NewGate()
+	workDir := tools.NewWorkDir()
 	registry := tools.NewRegistry(
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
-		builtin.Grep{}, builtin.Bash{},
+		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
 	)
 	engine := tools.NewEngine(registry, gate)
 
@@ -52,7 +53,7 @@ func main() {
 
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: engine,
-		EmbedClient: embedClient, RAG: ragRetriever,
+		EmbedClient: embedClient, RAG: ragRetriever, WorkDir: workDir,
 	})
 
 	ln, err := net.Listen("tcp", *addr)

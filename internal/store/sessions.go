@@ -11,16 +11,16 @@ type Session struct {
 }
 
 type Message struct {
-	ID         string
-	SessionID  string
-	Role       string
-	Content    string
-	ToolCalls  string // JSON
-	ToolCallID string
-	Citations  string // JSON
-	TokensIn   int
-	TokensOut  int
-	CreatedAt  string
+	ID         string `json:"id"`
+	SessionID  string `json:"session_id"`
+	Role       string `json:"role"`
+	Content    string `json:"content"`
+	ToolCalls  string `json:"tool_calls"`   // JSON
+	ToolCallID string `json:"tool_call_id"`
+	Citations  string `json:"citations"`    // JSON
+	TokensIn   int    `json:"tokens_in"`
+	TokensOut  int    `json:"tokens_out"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func (d *DB) CreateSession(s Session) error {
@@ -73,6 +73,12 @@ func (d *DB) ListSessions() ([]Session, error) {
 
 func (d *DB) DeleteSession(id string) error {
 	_, err := d.sql.Exec(`DELETE FROM sessions WHERE id=?`, id)
+	return err
+}
+
+// RenameSession updates a session's title and its updated_at timestamp.
+func (d *DB) RenameSession(id, title, now string) error {
+	_, err := d.sql.Exec(`UPDATE sessions SET title=?, updated_at=? WHERE id=?`, title, now, id)
 	return err
 }
 

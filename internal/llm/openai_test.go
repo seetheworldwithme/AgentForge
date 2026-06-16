@@ -56,6 +56,54 @@ func TestChatStreamParsesTextAndToolCall(t *testing.T) {
 	}
 }
 
+// TestChatStreamAccumulatesFragmentedToolCall reproduces the real-world stream
+// where a tool call's arguments arrive split across many delta chunks. The
+// client must accumulate them per index and emit a single complete ToolCall;
+// emitting per-chunk yields partial JSON ("unexpected end of JSON input").
+func TestChatStreamAccumulatesFragmentedToolCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		lines := []string{
+			// first chunk: name + id, empty args
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_42","type":"function","function":{"name":"bash","arguments":""}}]}}]}`,
+			// subsequent chunks: only argument fragments, no id/name
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{"}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"command\": \"pwd\""}}]}}]}`,
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}}]}`,
+			`data: [DONE]`,
+		}
+		for _, l := range lines {
+			_, _ = w.Write([]byte(l + "\n\n"))
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient(Config{BaseURL: srv.URL, APIKey: "test", Model: "m"})
+	ch, err := c.ChatStream(context.Background(), []Message{{Role: RoleUser, Content: "where am I"}}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+
+	var toolCalls []ToolCall
+	for chunk := range ch {
+		if chunk.ToolCall != nil {
+			toolCalls = append(toolCalls, *chunk.ToolCall)
+		}
+	}
+	if len(toolCalls) != 1 {
+		t.Fatalf("toolCalls = %+v, want exactly 1 (fragments must be accumulated)", toolCalls)
+	}
+	tc := toolCalls[0]
+	if tc.ID != "call_42" || tc.Name != "bash" {
+		t.Errorf("toolCall = {ID:%q Name:%q}, want {call_42, bash}", tc.ID, tc.Name)
+	}
+	if tc.Args != `{"command": "pwd"}` {
+		t.Errorf("Args = %q, want {\"command\": \"pwd\"}", tc.Args)
+	}
+}
+
 func TestEmbed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/embeddings" {

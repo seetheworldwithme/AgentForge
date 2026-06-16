@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -26,9 +27,10 @@ func (h *ChatHandler) Routes(r chi.Router) {
 }
 
 type chatRequest struct {
-	Message      string `json:"message"`
-	ToolsEnabled *bool  `json:"tools_enabled"`
-	UseRAG       *bool  `json:"use_rag"`
+	Message      string  `json:"message"`
+	ToolsEnabled *bool   `json:"tools_enabled"`
+	UseRAG       *bool   `json:"use_rag"`
+	ProviderID   *string `json:"provider_id"` // optional override; falls back to session's provider
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +49,16 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	// Allow per-message provider override so the user can switch models
+	// directly from the chat input without changing the session binding.
+	if req.ProviderID != nil && *req.ProviderID != "" && *req.ProviderID != sess.ProviderID {
+		override, err := h.DB.GetProvider(*req.ProviderID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "selected provider not found")
+			return
+		}
+		prov = override
 	}
 
 	// open SSE stream
@@ -84,6 +96,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	// load history
 	storedMsgs, _ := h.DB.ListMessages(id)
+	firstMessage := len(storedMsgs) == 0
 	history := make([]llm.Message, 0, len(storedMsgs)+1)
 	for _, m := range storedMsgs {
 		history = append(history, storeMsgToLLM(m))
@@ -129,7 +142,63 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		ID: asstID, SessionID: id, Role: "assistant",
 		Content: collected.text, ToolCalls: collected.toolCallsJSON(), CreatedAt: now,
 	})
+
+	// On the first turn, summarize the user's question into a concise title so
+	// the sidebar shows something meaningful instead of "新对话". Best-effort:
+	// any failure keeps the default title; the stream is still open so we can
+	// push a `title` event for the client to update live.
+	if firstMessage && strings.TrimSpace(req.Message) != "" {
+		if title := generateTitle(ctx, llmClient, req.Message); title != "" {
+			now = time.Now().UTC().Format(time.RFC3339)
+			_ = h.DB.RenameSession(id, title, now)
+			sse.Emit("title", map[string]any{"session_id": id, "title": title})
+		}
+	}
 }
+
+// generateTitle asks the model for a very short, plain summary of the user's
+// first message to use as a conversation title. Returns "" on any failure.
+func generateTitle(ctx context.Context, client llm.LLMClient, userMessage string) string {
+	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+
+	stream, err := client.ChatStream(tctx, []llm.Message{
+		{Role: llm.RoleSystem, Content: "你是一个标题生成器。根据用户的问题生成一个简洁的对话标题。" +
+			"要求：不超过15个字；只输出标题文字；不要加引号、书名号或末尾标点；不要解释。"},
+		{Role: llm.RoleUser, Content: userMessage},
+	}, nil)
+	if err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for chunk := range stream {
+		if chunk.Text != "" {
+			sb.WriteString(chunk.Text)
+		}
+	}
+	title := sanitizeTitle(sb.String())
+	return title
+}
+
+// sanitizeTitle trims surrounding whitespace/quotes/punctuation and collapses
+// the title to a single line, capping its length.
+func sanitizeTitle(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, trimCutset)
+	// collapse newlines/tabs to spaces and trim again
+	s = strings.Join(strings.Fields(s), " ")
+	if len([]rune(s)) > 20 {
+		s = string([]rune(s)[:20])
+	}
+	return s
+}
+
+// trimCutset lists characters stripped from the title's edges: ASCII and
+// CJK quotes/punctuation that models often wrap around a title.
+var trimCutset = "\"'`.,;:!?" +
+	".,、；；：：!？" +
+	"「」『』《》【】（）()" +
+	"“”‘’"
 
 func storeMsgToLLM(m store.Message) llm.Message {
 	return llm.Message{

@@ -17,8 +17,9 @@ type Deps struct {
 	DB          *store.DB
 	Gate        *tools.Gate
 	Engine      *tools.Engine
-	EmbedClient llm.LLMClient // used by KB ingest; nil disables upload
-	RAG         agent.RAGRetriever // optional; nil disables chat RAG
+	EmbedClient llm.LLMClient       // used by KB ingest; nil disables upload
+	RAG         agent.RAGRetriever  // optional; nil disables chat RAG
+	WorkDir     *tools.WorkDir      // optional; shared cwd for filesystem tools
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -41,6 +42,7 @@ func NewRouter(d Deps) http.Handler {
 		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, RAG: d.RAG}).Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient}).Routes(r)
+		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
 	})
 	return r
 }

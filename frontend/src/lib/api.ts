@@ -23,12 +23,23 @@ async function jdel(path: string): Promise<void> {
   const r = await fetch(`${b}${path}`, { method: 'DELETE' });
   if (!r.ok) throw new Error(`${path} ${r.status}`);
 }
+async function jput<T = any>(path: string, body: any): Promise<T> {
+  const b = await baseUrl();
+  const r = await fetch(`${b}${path}`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  return r.json() as Promise<T>;
+}
 
 export const api = {
   // --- providers ---
   listProviders: () => jget<Provider[]>('/api/providers'),
   createProvider: (p: Omit<Provider, 'id'>) => jpost<Provider>('/api/providers', p),
   deleteProvider: (id: string) => jdel(`/api/providers/${id}`),
+  updateProvider: (id: string, p: Omit<Provider, 'id'>) =>
+    jput<Provider>(`/api/providers/${id}`, p),
   // Validate connectivity (sends one "hi" chat completion). Returns ok/error;
   // never throws on auth failure — the UI branches on `ok`. Does NOT persist.
   testProvider: (p: { base_url: string; api_key: string; chat_model: string }) =>
@@ -37,6 +48,8 @@ export const api = {
   // --- sessions ---
   listSessions: () => jget<Session[]>('/api/sessions'),
   createSession: (s: Partial<Session>) => jpost<Session>('/api/sessions', s),
+  updateSession: (id: string, s: Partial<Session>) =>
+    jput<Session>(`/api/sessions/${id}`, s),
   deleteSession: (id: string) => jdel(`/api/sessions/${id}`),
   getSession: (id: string) =>
     jget<{ session: Session; messages: Message[] }>(`/api/sessions/${id}`),
@@ -63,4 +76,8 @@ export const api = {
   // --- tool confirmation ---
   confirmTool: (request_id: string, decision: 'allow' | 'deny', remember: string) =>
     jpost('/api/tools/confirm', { request_id, decision, remember }),
+
+  // --- working directory ---
+  getWorkDir: () => jget<{ workdir: string }>('/api/workdir'),
+  setWorkDir: (dir: string) => jput<{ workdir: string }>('/api/workdir', { workdir: dir }),
 };

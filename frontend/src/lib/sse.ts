@@ -6,7 +6,7 @@ import type { ChatEvent, ChatEventName } from '../types';
 export async function streamChat(
   sessionId: string,
   message: string,
-  opts: { tools_enabled?: boolean; use_rag?: boolean },
+  opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string },
   onEvent: (e: ChatEvent) => void,
 ): Promise<void> {
   const b = await baseUrl();
