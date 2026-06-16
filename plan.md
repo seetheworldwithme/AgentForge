@@ -4234,6 +4234,9 @@ func (s *Store) GetKnowledgeBase(id string) (*rag.KnowledgeBase, error) {
 	var embeddingModel sql.NullString
 	err := s.db.QueryRow(`SELECT id,name,embedding_model,chunk_size,overlap,created_at FROM knowledge_bases WHERE id=?`, id).
 		Scan(&kb.ID, &kb.Name, &embeddingModel, &kb.ChunkSize, &kb.Overlap, &created)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4295,6 +4298,9 @@ func (s *Store) GetDocument(id string) (*rag.Document, error) {
 	var d rag.Document
 	row := s.db.QueryRow(`SELECT id,kb_id,file_path,file_type,chunk_count,status,error_msg,content_hash,created_at FROM documents WHERE id=?`, id)
 	if err := scanDocument(&d, row.Scan); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return &d, nil

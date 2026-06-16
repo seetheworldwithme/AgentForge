@@ -52,3 +52,18 @@ func TestGetDocumentByHash(t *testing.T) {
 		t.Error("expected nil for nonexist")
 	}
 }
+
+// TestGetMissingReturnsNil 守护 by-key 查询在记录不存在时统一返回 (nil, nil)，
+// 而非把 sql.ErrNoRows 泄漏给上层（GetDocument/GetKnowledgeBase/GetDocumentByHash 一致）。
+func TestGetMissingReturnsNil(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "t.db")
+	s, _ := New(dbPath, 8)
+	defer s.Close()
+
+	if kb, err := s.GetKnowledgeBase("no-such-kb"); err != nil || kb != nil {
+		t.Errorf("GetKnowledgeBase(missing) = (%+v, %v), want (nil, nil)", kb, err)
+	}
+	if doc, err := s.GetDocument("no-such-doc"); err != nil || doc != nil {
+		t.Errorf("GetDocument(missing) = (%+v, %v), want (nil, nil)", doc, err)
+	}
+}
