@@ -19,9 +19,14 @@ func TestSchemaUsesDynamicDimension(t *testing.T) {
 
 func TestSchemaCreatesAllTables(t *testing.T) {
 	s := Schema(768)
+	// vec_chunks 是 sqlite-vec 虚拟表，与普通表 chunks 分开守护，
+	// 避免 strings.Contains("chunks") 同时命中 vec_chunks 而漏报回归。
 	for _, table := range []string{"knowledge_bases", "documents", "chunks", "eval_questions", "eval_expected", "eval_runs"} {
-		if !strings.Contains(s, table) {
+		if !strings.Contains(s, "CREATE TABLE IF NOT EXISTS "+table+" (") {
 			t.Errorf("schema missing table: %s", table)
 		}
+	}
+	if !strings.Contains(s, "CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks") {
+		t.Errorf("schema missing virtual table: vec_chunks")
 	}
 }
