@@ -11,6 +11,9 @@ core.out
 core.err
 vec-win.tar.gz
 
+# frontend build artifacts
+tsconfig.tsbuildinfo
+
 # go
 /vendor/
 
