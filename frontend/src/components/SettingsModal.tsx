@@ -9,7 +9,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           <h1 className="text-xl font-bold">Settings</h1>
           <button onClick={onClose}>×</button>
         </div>
-        <ProviderSettings />
+        <ProviderSettings onSaved={onClose} />
       </div>
     </div>
   );

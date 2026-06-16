@@ -29,6 +29,10 @@ export const api = {
   listProviders: () => jget<Provider[]>('/api/providers'),
   createProvider: (p: Omit<Provider, 'id'>) => jpost<Provider>('/api/providers', p),
   deleteProvider: (id: string) => jdel(`/api/providers/${id}`),
+  // Validate connectivity (sends one "hi" chat completion). Returns ok/error;
+  // never throws on auth failure — the UI branches on `ok`. Does NOT persist.
+  testProvider: (p: { base_url: string; api_key: string; chat_model: string }) =>
+    jpost<{ ok: boolean; error?: string }>('/api/providers/test', p),
 
   // --- sessions ---
   listSessions: () => jget<Session[]>('/api/sessions'),
