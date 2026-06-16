@@ -32,7 +32,7 @@ func (s *Store) SaveChunks(chunks []rag.Chunk, vectors [][]float32) ([]int64, er
 	}
 	defer chunkInsert.Close()
 
-	vecInsert, err := tx.Prepare(`INSERT INTO vec_chunks(embedding) VALUES (?)`)
+	vecInsert, err := tx.Prepare(`INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)`)
 	if err != nil {
 		return nil, fmt.Errorf("prepare vec insert: %w", err)
 	}
@@ -43,10 +43,16 @@ func (s *Store) SaveChunks(chunks []rag.Chunk, vectors [][]float32) ([]int64, er
 		if err != nil {
 			return nil, fmt.Errorf("insert chunk[%d]: %w", i, err)
 		}
-		id, _ := res.LastInsertId()
+		id, err := res.LastInsertId()
+		if err != nil {
+			return nil, fmt.Errorf("last insert id[%d]: %w", i, err)
+		}
 		ids = append(ids, id)
 
-		if _, err := vecInsert.Exec(vecToBlob(vectors[i])); err != nil {
+		// 用 chunk 的 rowid 作为 vec_chunks 的显式 rowid，保证两表按 id 关联，
+		// 供 T17 Search 的 JOIN chunks c ON c.id = v.rowid 成立。
+		// 否则 vec_chunks 会用独立自增 rowid，与 chunks.id 错位。
+		if _, err := vecInsert.Exec(id, vecToBlob(vectors[i])); err != nil {
 			return nil, fmt.Errorf("insert vec[%d]: %w", i, err)
 		}
 	}

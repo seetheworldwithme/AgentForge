@@ -43,6 +43,36 @@ func TestSaveChunks_AndCount(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("expected 2 chunks, got %d", n)
 	}
+
+	// 守护 chunk↔vec_chunks 的 rowid 关联：T17 Search 的 JOIN 依赖此关系。
+	// vec_chunks 必须用 chunk 的 rowid，否则两表按各自独立自增会错位。
+	var vecN int
+	if err := s.DB().QueryRow("SELECT count(*) FROM vec_chunks").Scan(&vecN); err != nil {
+		t.Fatalf("count vec_chunks: %v", err)
+	}
+	if vecN != 2 {
+		t.Fatalf("expected 2 vec rows, got %d", vecN)
+	}
+	rows, err := s.DB().Query(`SELECT c.id, c.content FROM vec_chunks v JOIN chunks c ON c.id = v.rowid ORDER BY c.id`)
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	defer rows.Close()
+	type pair struct {
+		id   int64
+		text string
+	}
+	var got []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.id, &p.text); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, p)
+	}
+	if len(got) != 2 || got[0].text != "hello world" || got[1].text != "foo bar baz" {
+		t.Fatalf("join results wrong: %+v", got)
+	}
 }
 
 func TestSaveChunks_RollbackOnError(t *testing.T) {
