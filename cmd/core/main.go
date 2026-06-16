@@ -2,31 +2,71 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	"github.com/agent-rust/core/internal/server"
+	"github.com/agent-rust/core/internal/store"
+	"github.com/agent-rust/core/internal/tools"
+	"github.com/agent-rust/core/internal/tools/builtin"
 )
 
 func main() {
+	dataDir := flag.String("data", defaultDataDir(), "data directory")
 	addr := flag.String("addr", "127.0.0.1:0", "listen address")
 	flag.Parse()
 
-	r := chi.NewRouter()
-	r.Use(middleware.Logger, middleware.Recoverer)
-	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	if err := os.MkdirAll(*dataDir, 0o755); err != nil {
+		log.Fatalf("mkdir data: %v", err)
+	}
+	db, err := store.Open(filepath.Join(*dataDir, "app.db"))
+	if err != nil {
+		log.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	gate := tools.NewGate()
+	registry := tools.NewRegistry(
+		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
+		builtin.Grep{}, builtin.Bash{},
+	)
+	engine := tools.NewEngine(registry, gate)
+
+	router := server.NewRouter(server.Deps{DB: db, Gate: gate, Engine: engine})
 
 	ln, err := net.Listen("tcp", *addr)
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
-	log.Printf("core listening on %s", ln.Addr())
-	fmt.Println(ln.Addr().String()) // printed for tests to capture port
-	log.Fatal(http.Serve(ln, r))
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := os.WriteFile(filepath.Join(*dataDir, "port.lock"), []byte(itoa(port)), 0o644); err != nil {
+		log.Printf("warn: write port.lock: %v", err)
+	}
+	log.Printf("core listening on %s (port %d)", ln.Addr(), port)
+	log.Fatal(http.Serve(ln, router))
+}
+
+func defaultDataDir() string {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		base = "."
+	}
+	return filepath.Join(base, "agent-rust")
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [16]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
 }
