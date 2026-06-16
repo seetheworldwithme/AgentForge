@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
+	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/store"
 )
 
@@ -17,6 +19,7 @@ type ConfigHandler struct {
 func (h *ConfigHandler) Routes(r chi.Router) {
 	r.Get("/providers", h.listProviders)
 	r.Post("/providers", h.createProvider)
+	r.Post("/providers/test", h.testProvider)
 	r.Put("/providers/{id}", h.updateProvider)
 	r.Delete("/providers/{id}", h.deleteProvider)
 }
@@ -92,6 +95,50 @@ func (h *ConfigHandler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// testProvider validates that the given credentials can reach a chat
+// completion endpoint and stream a response. It does NOT persist anything;
+// the UI calls it before saving so the user gets immediate feedback.
+func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
+	var dto providerDTO
+	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if dto.BaseURL == "" || dto.ChatModel == "" {
+		writeErr(w, http.StatusBadRequest, "base_url and chat_model are required")
+		return
+	}
+
+	client := llm.NewOpenAIClient(llm.Config{
+		BaseURL: dto.BaseURL, APIKey: dto.APIKey, Model: dto.ChatModel,
+	})
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	stream, err := client.ChatStream(ctx,
+		[]llm.Message{{Role: llm.RoleUser, Content: "hi"}},
+		nil, // no tools; we only want to confirm connectivity
+	)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	// Read until the stream yields a chunk or closes. A successful first
+	// chunk proves the endpoint + key + model work end to end; transport
+	// errors (bad URL, 401, etc.) surface as the err returned by ChatStream
+	// above. We drain the rest of the stream so the server connection closes
+	// cleanly.
+	got := false
+	for range stream {
+		got = true
+	}
+	if !got {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "empty response"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func toProviderDTO(p store.Provider) providerDTO {
