@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/agent-rust/core/internal/agent"
+	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
 )
@@ -16,7 +17,8 @@ type Deps struct {
 	DB          *store.DB
 	Gate        *tools.Gate
 	Engine      *tools.Engine
-	RAG         agent.RAGRetriever // optional
+	EmbedClient llm.LLMClient // used by KB ingest; nil disables upload
+	RAG         agent.RAGRetriever // optional; nil disables chat RAG
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -38,6 +40,7 @@ func NewRouter(d Deps) http.Handler {
 		(&SessionHandler{DB: d.DB}).Routes(r)
 		(&ChatHandler{DB: d.DB, Engine: d.Engine, RAG: d.RAG}).Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
+		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient}).Routes(r)
 	})
 	return r
 }
