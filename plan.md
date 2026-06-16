@@ -3376,7 +3376,7 @@ package embedder
 import "testing"
 
 func TestFakeEmbedder_Deterministic(t *testing.T) {
-	e := &FakeEmbedder{Dim: 8}
+	e := NewFakeEmbedder(8)
 	v1, _ := e.EmbedOne("hello world")
 	v2, _ := e.EmbedOne("hello world")
 	if len(v1) != 8 {
@@ -3390,7 +3390,7 @@ func TestFakeEmbedder_Deterministic(t *testing.T) {
 }
 
 func TestFakeEmbedder_EmbedBatch(t *testing.T) {
-	e := &FakeEmbedder{Dim: 4}
+	e := NewFakeEmbedder(4)
 	vecs, err := e.Embed([]string{"a", "b", "c"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -3426,11 +3426,19 @@ type Embedder interface {
 }
 
 // FakeEmbedder 确定性 embedding，基于内容词频哈希。仅测试用。
+//
+// 注意：维度通过未导出字段 dim 持有、由 Dim() 方法暴露，以满足 Embedder
+// 接口（Go 不允许同类型的字段与方法同名）。请用 NewFakeEmbedder 构造。
 type FakeEmbedder struct {
-	Dim int
+	dim int
 }
 
-func (e *FakeEmbedder) Dim() int { return e.Dim }
+// NewFakeEmbedder 创建指定维度的 FakeEmbedder。
+func NewFakeEmbedder(dim int) *FakeEmbedder {
+	return &FakeEmbedder{dim: dim}
+}
+
+func (e *FakeEmbedder) Dim() int { return e.dim }
 
 func (e *FakeEmbedder) EmbedOne(text string) ([]float32, error) {
 	vecs, err := e.Embed([]string{text})
@@ -3441,7 +3449,7 @@ func (e *FakeEmbedder) EmbedOne(text string) ([]float32, error) {
 }
 
 func (e *FakeEmbedder) Embed(texts []string) ([][]float32, error) {
-	if e.Dim <= 0 {
+	if e.dim <= 0 {
 		return nil, fmt.Errorf("FakeEmbedder.Dim must be > 0")
 	}
 	out := make([][]float32, len(texts))
@@ -3452,10 +3460,10 @@ func (e *FakeEmbedder) Embed(texts []string) ([][]float32, error) {
 }
 
 func (e *FakeEmbedder) hashVector(text string) []float32 {
-	v := make([]float32, e.Dim)
+	v := make([]float32, e.dim)
 	for _, tok := range tokenize(text) {
 		h := sha256.Sum256([]byte(tok))
-		idx := int(binary.BigEndian.Uint32(h[:4])) % e.Dim
+		idx := int(binary.BigEndian.Uint32(h[:4])) % e.dim
 		val := math.Float32frombits(binary.BigEndian.Uint32(h[4:8]))
 		if val < 0 {
 			val = -val
@@ -4966,7 +4974,7 @@ func TestImportDocument_Markdown(t *testing.T) {
 	mdPath := filepath.Join(t.TempDir(), "note.md")
 	os.WriteFile(mdPath, []byte("# 笔记\n\n这是第一段内容。\n\n## 细节\n\n第二段内容。"), 0644)
 
-	p := NewPipeline(s, &embedder.FakeEmbedder{Dim: 32})
+	p := NewPipeline(s, embedder.NewFakeEmbedder(32))
 	result, err := p.ImportDocument(kbID, mdPath)
 	if err != nil {
 		t.Fatalf("ImportDocument: %v", err)
@@ -4988,7 +4996,7 @@ func TestImportDocument_Dedup(t *testing.T) {
 	mdPath := filepath.Join(t.TempDir(), "note.md")
 	os.WriteFile(mdPath, []byte("# 标题\n\n内容"), 0644)
 
-	p := NewPipeline(s, &embedder.FakeEmbedder{Dim: 32})
+	p := NewPipeline(s, embedder.NewFakeEmbedder(32))
 	r1, _ := p.ImportDocument(kbID, mdPath)
 	if r1.Skipped {
 		t.Fatal("first import should not be skipped")
@@ -5005,7 +5013,7 @@ func TestImportDocument_UnsupportedType(t *testing.T) {
 	defer s.Close()
 	kbID, _ := s.CreateKnowledgeBase("test", "fake", 512, 50)
 
-	p := NewPipeline(s, &embedder.FakeEmbedder{Dim: 32})
+	p := NewPipeline(s, embedder.NewFakeEmbedder(32))
 	_, err := p.ImportDocument(kbID, "foo.xyz")
 	if err == nil {
 		t.Fatal("expected error for unsupported type")
@@ -5199,7 +5207,7 @@ func TestRetrieve_ReturnsRelevant(t *testing.T) {
 	mdPath := filepath.Join(t.TempDir(), "note.md")
 	os.WriteFile(mdPath, []byte("# 数据库\n\nAgentForge 使用 sqlite-vec 存储向量。"), 0644)
 
-	emb := &embedder.FakeEmbedder{Dim: 32}
+	emb := embedder.NewFakeEmbedder(32)
 	p := NewPipeline(s, emb)
 	p.ImportDocument(kbID, mdPath)
 
@@ -5357,7 +5365,7 @@ func TestService_ImportAndRetrieve(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	svc, err := NewService(ServiceConfig{
 		DBPath: dbPath, EmbedDim: 32,
-		Embedder: &embedder.FakeEmbedder{Dim: 32}, EmbeddingModel: "fake",
+		Embedder: embedder.NewFakeEmbedder(32), EmbeddingModel: "fake",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -5821,7 +5829,7 @@ func TestRunEvaluation(t *testing.T) {
 	qID, _ := AddQuestion(s, kbID, "what is it", "manual")
 	SetExpected(s, qID, []int64{ids[0]})
 
-	emb := &embedder.FakeEmbedder{Dim: 8}
+	emb := embedder.NewFakeEmbedder(8)
 	result, err := Run(s, emb, kbID, EvalParams{TopK: 5, ChunkSize: 512})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -7116,7 +7124,7 @@ func TestKnowledgeBaseTool_RetrievesAndFormats(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "t.db")
 	svc, err := NewService(ServiceConfig{
 		DBPath: dbPath, EmbedDim: 32,
-		Embedder: &embedder.FakeEmbedder{Dim: 32}, EmbeddingModel: "fake",
+		Embedder: embedder.NewFakeEmbedder(32), EmbeddingModel: "fake",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -7156,7 +7164,7 @@ func TestKnowledgeBaseTool_RetrievesAndFormats(t *testing.T) {
 func TestKnowledgeBaseTool_InvalidArgs(t *testing.T) {
 	svc, _ := NewService(ServiceConfig{
 		DBPath: filepath.Join(t.TempDir(), "t.db"), EmbedDim: 32,
-		Embedder: &embedder.FakeEmbedder{Dim: 32}, EmbeddingModel: "fake",
+		Embedder: embedder.NewFakeEmbedder(32), EmbeddingModel: "fake",
 	})
 	defer svc.Close()
 	kbTool := NewKnowledgeBaseTool(svc, "kb1", 3)
