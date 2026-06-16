@@ -100,23 +100,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((st) => {
         const msgs = [...st.messages];
         if (e.event === 'delta') {
+          let text = e.data.text ?? '';
+          if (!text) return st; // skip empty deltas to reduce blank lines
           // append onto the last assistant message (tools may interleave)
           for (let i = msgs.length - 1; i >= 0; i--) {
             if (msgs[i].role === 'assistant') {
-              msgs[i] = { ...msgs[i], content: msgs[i].content + (e.data.text ?? '') };
+              if (msgs[i].content.trim().length === 0) {
+                text = text.trimStart();
+              }
+              if (!text) return st;
+              msgs[i] = { ...msgs[i], content: msgs[i].content + text };
               break;
             }
           }
         } else if (e.event === 'tool_call') {
+          // Parse raw args for a cleaner display format
+          let input = e.data.input;
+          let displayInput = input;
+          if (input && typeof input.raw === 'string') {
+            try {
+              const parsed = JSON.parse(input.raw);
+              displayInput = { ...parsed };
+              // flatten nested objects for compact display
+              for (const k of Object.keys(displayInput)) {
+                if (typeof displayInput[k] === 'object' && displayInput[k] !== null) {
+                  displayInput[k] = JSON.stringify(displayInput[k]);
+                }
+              }
+            } catch {
+              displayInput = input.raw;
+            }
+          }
           msgs.push({
             id: 'tool-' + e.data.call_id, session_id: id, role: 'tool',
-            content: `→ ${e.data.tool}(${JSON.stringify(e.data.input)})`,
+            content: `→ ${e.data.tool}(${JSON.stringify(displayInput)})`,
             tool_call_id: e.data.call_id,
           });
         } else if (e.event === 'tool_result') {
+          // Append result to the matching tool_call message (same bubble)
+          let found = false;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].tool_call_id === e.data.call_id && msgs[i].content.startsWith('→')) {
+              const result = (e.data.content ?? '').trimEnd();
+              msgs[i] = { ...msgs[i], content: msgs[i].content + '\n─────────\n' + result };
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            msgs.push({
+              id: 'res-' + e.data.call_id, session_id: id, role: 'tool',
+              content: e.data.content, tool_call_id: e.data.call_id,
+            });
+          }
+          // Start a new assistant message for subsequent LLM deltas
           msgs.push({
-            id: 'res-' + e.data.call_id, session_id: id, role: 'tool',
-            content: e.data.content, tool_call_id: e.data.call_id,
+            id: 'asst-' + e.data.call_id + '-' + Date.now(),
+            session_id: id, role: 'assistant', content: '',
           });
         }
         return { messages: msgs };

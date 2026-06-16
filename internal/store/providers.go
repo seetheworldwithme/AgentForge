@@ -52,9 +52,26 @@ func (d *DB) GetDefaultProvider() (Provider, error) {
 	return scanProvider(row)
 }
 
+// DeleteProvider removes a provider and clears any references to it. Sessions
+// and knowledge_bases that pointed at it keep their rows but lose the link
+// (provider_id / embed_provider_id set to NULL), so the foreign-key constraint
+// never blocks deletion.
 func (d *DB) DeleteProvider(id string) error {
-	_, err := d.sql.Exec(`DELETE FROM providers WHERE id=?`, id)
-	return err
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE sessions SET provider_id=NULL WHERE provider_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE knowledge_bases SET embed_provider_id=NULL WHERE embed_provider_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM providers WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 type scanner interface {

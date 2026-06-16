@@ -39,6 +39,40 @@ func TestProviderCRUD(t *testing.T) {
 	}
 }
 
+// TestDeleteProviderClearsReferences reproduces the FOREIGN KEY constraint
+// failure: deleting a provider that sessions and knowledge_bases point at must
+// succeed, nulling the links rather than failing.
+func TestDeleteProviderClearsReferences(t *testing.T) {
+	db, _ := Open(filepath.Join(t.TempDir(), "t.db"))
+	defer db.Close()
+
+	db.CreateProvider(Provider{
+		ID: "prov_1", Name: "p", BaseURL: "u", APIKey: "k", ChatModel: "m",
+		IsDefault: true, CreatedAt: now(), UpdatedAt: now(),
+	})
+	db.CreateSession(Session{ID: "sess_1", Title: "t", ProviderID: "prov_1",
+		ToolsEnabled: 1, CreatedAt: now(), UpdatedAt: now()})
+	db.CreateKB(KnowledgeBase{ID: "kb_1", Name: "k", EmbedProviderID: "prov_1", CreatedAt: now()})
+
+	if err := db.DeleteProvider("prov_1"); err != nil {
+		t.Fatalf("delete blocked by FK: %v", err)
+	}
+	if _, err := db.GetProvider("prov_1"); err == nil {
+		t.Errorf("provider still present after delete")
+	}
+
+	// session keeps its row but loses the provider link
+	sess, _ := db.GetSession("sess_1")
+	if sess.ProviderID != "" {
+		t.Errorf("session provider_id=%q, want empty", sess.ProviderID)
+	}
+	// kb keeps its row but loses the embed provider link
+	kb, _ := db.GetKB("kb_1")
+	if kb.EmbedProviderID != "" {
+		t.Errorf("kb embed_provider_id=%q, want empty", kb.EmbedProviderID)
+	}
+}
+
 func TestSessionAndMessages(t *testing.T) {
 	db, _ := Open(filepath.Join(t.TempDir(), "t.db"))
 	defer db.Close()

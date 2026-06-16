@@ -20,9 +20,11 @@ export function ChatView() {
             {currentId ? 'Start the conversation' : 'Select or create a session'}
           </div>
         )}
-        {messages.map((m) => (
-          <MessageBubble key={m.id} m={m} />
-        ))}
+        {messages
+          .filter((m) => m.role !== 'assistant' || m.content.trim().length > 0)
+          .map((m) => (
+            <MessageBubble key={m.id} m={m} />
+          ))}
         <div ref={bottomRef} />
       </div>
       <ChatInput sessionId={currentId} />

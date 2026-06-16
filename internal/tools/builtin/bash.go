@@ -7,6 +7,10 @@ import (
 	"os/exec"
 	"runtime"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 
 	"github.com/agent-rust/core/internal/tools"
 )
@@ -65,12 +69,35 @@ func (b Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (t
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	out := stdout.String()
+	// On Windows, cmd.exe outputs in the system OEM code page (e.g. GBK/CP936
+	// on Chinese Windows). Convert to UTF-8 when the raw bytes aren't valid UTF-8.
+	if runtime.GOOS == "windows" {
+		out = decodeWinOutput(out)
+	}
 	if stderr.Len() > 0 {
-		out += "\n[stderr]\n" + stderr.String()
+		errStr := stderr.String()
+		if runtime.GOOS == "windows" {
+			errStr = decodeWinOutput(errStr)
+		}
+		out += "\n[stderr]\n" + errStr
 	}
 	if err != nil {
 		out += fmt.Sprintf("\n[error] %v", err)
 		return tools.Result{Content: out, IsError: true}, nil
 	}
 	return tools.Result{Content: out}, nil
+}
+
+// decodeWinOutput attempts to convert non-UTF-8 command output (typically GBK
+// on Simplified Chinese Windows) to valid UTF-8.
+func decodeWinOutput(s string) string {
+	if s == "" || utf8.ValidString(s) {
+		return s
+	}
+	dec := simplifiedchinese.GBK.NewDecoder()
+	result, _, err := transform.Bytes(dec, []byte(s))
+	if err != nil {
+		return s
+	}
+	return string(result)
 }
