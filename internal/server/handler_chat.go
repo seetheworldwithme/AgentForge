@@ -15,9 +15,10 @@ import (
 )
 
 type ChatHandler struct {
-	DB          *store.DB
-	Engine      *tools.Engine
-	RAG         agent.RAGRetriever // optional; nil disables RAG
+	DB     *store.DB
+	Gate   *tools.Gate // wires tool confirmations onto this chat's SSE stream
+	Engine *tools.Engine
+	RAG    agent.RAGRetriever // optional; nil disables RAG
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -55,6 +56,23 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sse.Emit("started", map[string]any{"session_id": id})
+
+	// Wire tool confirmations onto this chat's SSE stream. When a dangerous
+	// tool (e.g. bash) calls gate.Request, the gate invokes the emitter, which
+	// emits a confirm_req event here; the UI resolves it via
+	// POST /api/tools/confirm and the gate unblocks. Restored to a no-op on
+	// return so a stale emitter never leaks into another chat. (Gate is a
+	// process-wide singleton; only one chat is active at a time.)
+	if h.Gate != nil {
+		h.Gate.SetEmitter(func(req tools.ConfirmRequest) {
+			sse.Emit("confirm_req", map[string]any{
+				"request_id": req.ID,
+				"tool":       req.Tool,
+				"input":      map[string]any{"raw": req.Args},
+			})
+		})
+		defer h.Gate.SetEmitter(func(tools.ConfirmRequest) {})
+	}
 
 	// build LLM client with retry
 	llmClient := llm.NewRetry(

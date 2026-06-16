@@ -38,7 +38,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		(&ConfigHandler{DB: d.DB}).Routes(r)
 		(&SessionHandler{DB: d.DB}).Routes(r)
-		(&ChatHandler{DB: d.DB, Engine: d.Engine, RAG: d.RAG}).Routes(r)
+		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, RAG: d.RAG}).Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient}).Routes(r)
 	})
