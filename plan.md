@@ -4214,7 +4214,7 @@ import (
 
 func newID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
@@ -4231,11 +4231,13 @@ func (s *Store) CreateKnowledgeBase(name, embeddingModel string, chunkSize, over
 func (s *Store) GetKnowledgeBase(id string) (*rag.KnowledgeBase, error) {
 	var kb rag.KnowledgeBase
 	var created string
+	var embeddingModel sql.NullString
 	err := s.db.QueryRow(`SELECT id,name,embedding_model,chunk_size,overlap,created_at FROM knowledge_bases WHERE id=?`, id).
-		Scan(&kb.ID, &kb.Name, &kb.EmbeddingModel, &kb.ChunkSize, &kb.Overlap, &created)
+		Scan(&kb.ID, &kb.Name, &embeddingModel, &kb.ChunkSize, &kb.Overlap, &created)
 	if err != nil {
 		return nil, err
 	}
+	kb.EmbeddingModel = embeddingModel.String
 	kb.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
 	return &kb, nil
 }
@@ -4250,9 +4252,11 @@ func (s *Store) ListKnowledgeBases() ([]rag.KnowledgeBase, error) {
 	for rows.Next() {
 		var kb rag.KnowledgeBase
 		var created string
-		if err := rows.Scan(&kb.ID, &kb.Name, &kb.EmbeddingModel, &kb.ChunkSize, &kb.Overlap, &created); err != nil {
+		var embeddingModel sql.NullString
+		if err := rows.Scan(&kb.ID, &kb.Name, &embeddingModel, &kb.ChunkSize, &kb.Overlap, &created); err != nil {
 			return nil, err
 		}
+		kb.EmbeddingModel = embeddingModel.String
 		kb.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
 		out = append(out, kb)
 	}
@@ -4269,30 +4273,42 @@ func (s *Store) CreateDocument(kbID, filePath, fileType, contentHash string) (st
 	return id, nil
 }
 
+// scanDocument 把一行 documents 记录 Scan 到 rag.Document。
+// schema 中 file_type/status/error_msg/content_hash/chunk_count 未标 NOT NULL，
+// 必须用 NullString/NullInt64，否则 NULL 行 Scan 失败。
+func scanDocument(d *rag.Document, scan func(...any) error) error {
+	var created, fileType, status, errorMsg, contentHash sql.NullString
+	var chunkCount sql.NullInt64
+	if err := scan(&d.ID, &d.KBID, &d.FilePath, &fileType, &chunkCount, &status, &errorMsg, &contentHash, &created); err != nil {
+		return err
+	}
+	d.FileType = fileType.String
+	d.ChunkCount = int(chunkCount.Int64)
+	d.Status = status.String
+	d.ErrorMsg = errorMsg.String
+	d.ContentHash = contentHash.String
+	d.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created.String)
+	return nil
+}
+
 func (s *Store) GetDocument(id string) (*rag.Document, error) {
 	var d rag.Document
-	var created string
-	err := s.db.QueryRow(`SELECT id,kb_id,file_path,file_type,chunk_count,status,error_msg,content_hash,created_at FROM documents WHERE id=?`, id).
-		Scan(&d.ID, &d.KBID, &d.FilePath, &d.FileType, &d.ChunkCount, &d.Status, &d.ErrorMsg, &d.ContentHash, &created)
-	if err != nil {
+	row := s.db.QueryRow(`SELECT id,kb_id,file_path,file_type,chunk_count,status,error_msg,content_hash,created_at FROM documents WHERE id=?`, id)
+	if err := scanDocument(&d, row.Scan); err != nil {
 		return nil, err
 	}
-	d.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
 	return &d, nil
 }
 
 func (s *Store) GetDocumentByHash(hash string) (*rag.Document, error) {
 	var d rag.Document
-	var created string
-	err := s.db.QueryRow(`SELECT id,kb_id,file_path,file_type,chunk_count,status,error_msg,content_hash,created_at FROM documents WHERE content_hash=?`, hash).
-		Scan(&d.ID, &d.KBID, &d.FilePath, &d.FileType, &d.ChunkCount, &d.Status, &d.ErrorMsg, &d.ContentHash, &created)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
+	row := s.db.QueryRow(`SELECT id,kb_id,file_path,file_type,chunk_count,status,error_msg,content_hash,created_at FROM documents WHERE content_hash=?`, hash)
+	if err := scanDocument(&d, row.Scan); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
 		return nil, err
 	}
-	d.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
 	return &d, nil
 }
 
