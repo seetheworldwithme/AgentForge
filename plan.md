@@ -3639,7 +3639,14 @@ git commit -m "feat(rag/store): add schema with dynamic vector dimension"
 go get modernc.org/sqlite@latest
 ```
 
-> **⚠️ 验证 sqlite-vec 可用：** modernc.org/sqlite 需较新版本支持 sqlite-vec。先测试 `SELECT vec_version()`。若该版本不支持，升级版本或换 ncruces 方案。这是 Phase 2 的最大技术风险，必须先验证通过再继续。
+> **⚠️ 验证 sqlite-vec 可用：** modernc.org/sqlite 需 v1.47.0+ 才内置 sqlite-vec。
+> **必须额外 blank-import `modernc.org/sqlite/vec`**（自动注册 sqlite-vec 扩展，
+> 否则 `SELECT vec_version()` 会报 "no such function"）。先测试 `SELECT vec_version()`
+> 确认。若该版本不支持，升级版本或换 ncruces 方案。这是 Phase 2 的最大技术风险，必须先验证通过再继续。
+>
+> **已验证（2026-06-16，Windows）：** modernc.org/sqlite v1.52.0 +
+> `import _ "modernc.org/sqlite/vec"` → `vec_version()` 返回 `v0.1.9`，
+> `CREATE VIRTUAL TABLE ... USING vec0(embedding float[N])` 与 MATCH 检索均可用。
 
 - [ ] **Step 2: 写失败测试**
 
@@ -3695,6 +3702,9 @@ import (
 	"fmt"
 
 	_ "modernc.org/sqlite"
+	// blank-import：注册 sqlite-vec 扩展，使 vec_version()/vec0 可用。
+	// 缺失则 SELECT vec_version() 报 "no such function: vec_version"。
+	_ "modernc.org/sqlite/vec"
 )
 
 type Store struct {
