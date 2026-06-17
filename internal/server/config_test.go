@@ -53,6 +53,27 @@ func TestProviderTestEndpoint(t *testing.T) {
 	if !strings.Contains(body, "401") && !strings.Contains(body, "Unauthorized") && !strings.Contains(body, "invalid api key") {
 		t.Errorf("fail case: expected error detail, got %s", body)
 	}
+
+	// embed case: a vector model must be probed via /embeddings, NOT
+	// /chat/completions (which 400s with "model does not exist"). The mock
+	// only serves /embeddings, so a chat-path probe would 404 and fail.
+	embedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/embeddings" {
+			t.Errorf("embed case: expected /embeddings, got %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[0.1,0.2,0.3]}]}`))
+	}))
+	defer embedSrv.Close()
+
+	body = postJSON(t, router, "/api/providers/test", map[string]any{
+		"base_url": embedSrv.URL, "api_key": "k", "embed_model": "m", "kind": "embed",
+	})
+	if !strings.Contains(body, `"ok":true`) {
+		t.Errorf("embed case: expected ok=true, got %s", body)
+	}
 }
 
 func postJSON(t *testing.T, router http.Handler, path string, body any) string {

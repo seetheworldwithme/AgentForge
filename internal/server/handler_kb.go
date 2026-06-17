@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -356,9 +358,18 @@ func pickParser(filename, mime string) parser.Parser {
 }
 
 func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) {
+	// ingest runs in a goroutine; a panic here must still flip the document
+	// to "failed", otherwise it stays "processing" forever with no clue.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ingest: doc=%s PANIC: %v", doc.ID, r)
+			_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, fmt.Sprintf("panic: %v", r))
+		}
+	}()
 	kb, _ := h.DB.GetKB(kbID)
 	embedClient := h.embedClientForKB(kb)
 	if embedClient == nil {
+		log.Printf("ingest: doc=%s skipped: no embed provider configured", doc.ID)
 		_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, "no embed provider configured")
 		return
 	}
@@ -369,7 +380,9 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	_ = ing.IngestFile(ctx, doc.ID, doc.Filename, doc.MimeType, raw)
+	if err := ing.IngestFile(ctx, doc.ID, doc.Filename, doc.MimeType, raw); err != nil {
+		log.Printf("ingest: doc=%s ingest failed: %v", doc.ID, err)
+	}
 }
 
 func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) llm.LLMClient {

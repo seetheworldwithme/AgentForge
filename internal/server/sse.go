@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 )
 
-// SSEWriter wraps an http.ResponseWriter to emit Server-Sent Events.
+// SSEWriter wraps an http.ResponseWriter to emit Server-Sent Events. Emit is
+// safe for concurrent callers: the chat handler streams the main reply and the
+// concurrent title generation through the same writer, so writes are serialized.
 type SSEWriter struct {
+	mu      sync.Mutex
 	w       http.ResponseWriter
 	flusher http.Flusher
 }
@@ -25,12 +29,15 @@ func NewSSEWriter(w http.ResponseWriter) (*SSEWriter, bool) {
 	return &SSEWriter{w: w, flusher: f}, true
 }
 
-// Emit writes one SSE event: "event: <event>\ndata: <json>\n\n".
+// Emit writes one SSE event: "event: <event>\ndata: <json>\n\n". The mutex
+// serializes the write+flush so concurrent emitters never interleave frames.
 func (s *SSEWriter) Emit(event string, data any) {
 	b, err := json.Marshal(data)
 	if err != nil {
 		b = []byte(fmt.Sprintf(`{"error":"marshal: %s"}`, err.Error()))
 	}
+	s.mu.Lock()
 	_, _ = fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, string(b))
 	s.flusher.Flush()
+	s.mu.Unlock()
 }

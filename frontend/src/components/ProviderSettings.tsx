@@ -165,6 +165,8 @@ export function ProviderSettings() {
         base_url: form.base_url,
         api_key: form.api_key,
         chat_model: form.chat_model,
+        embed_model: form.embed_model,
+        kind: category,
       });
       if (!res.ok) {
         setStatus({ kind: 'error', message: res.error ?? '连通性测试失败' });

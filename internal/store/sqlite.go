@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -61,6 +62,7 @@ func init() {
 				return nil // no extension available; vector ops error later
 			}
 			if err := conn.LoadExtension(p, "sqlite3_vec_init"); err != nil {
+				log.Printf("ERROR: failed to load sqlite-vec extension from %s: %v", p, err)
 				return fmt.Errorf("load sqlite-vec: %w", err)
 			}
 			return nil
@@ -70,6 +72,11 @@ func init() {
 
 // Open opens (or creates) a SQLite database at path and runs migrations.
 func Open(path string) (*DB, error) {
+	if vecExtPath() == "" {
+		log.Printf("WARN: sqlite-vec extension (vec0) not found under ext/%s/ — "+
+			"vector/RAG features are disabled and documents will fail to index. "+
+			"Place vec0.<ext> there (see Makefile).", runtime.GOOS)
+	}
 	sqlDB, err := sql.Open("sqlite3_vec", path+"?_journal_mode=WAL&_busy_timeout=5000&_foreign_keys=on")
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

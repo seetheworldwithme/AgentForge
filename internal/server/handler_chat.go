@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -129,6 +130,35 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
+
+	// Kick off title generation concurrently with the main reply. On the first
+	// turn, summarize the user's question into a concise title so the sidebar
+	// shows something meaningful instead of "新对话". Best-effort: any failure
+	// keeps the default title. This is an independent LLM call that touches
+	// neither the Gate nor agent state, so it safely overlaps the agent loop;
+	// SSE writes are serialized by SSEWriter's mutex.
+	var titleWg sync.WaitGroup
+	if firstMessage && strings.TrimSpace(req.Message) != "" {
+		titleWg.Add(1)
+		go func() {
+			defer titleWg.Done()
+			title, chunks, err := generateTitle(ctx, llmClient, req.Message)
+			switch {
+			case err != nil:
+				log.Printf("title-gen: session %s FAILED: %v", id, err)
+			case title == "":
+				log.Printf("title-gen: session %s empty title (%d chunks received, none had text)", id, chunks)
+			default:
+				_ = h.DB.RenameSession(id, title, time.Now().UTC().Format(time.RFC3339))
+				sse.Emit("title", map[string]any{"session_id": id, "title": title})
+				log.Printf("title-gen: session %s -> %q", id, title)
+			}
+		}()
+	} else {
+		log.Printf("title-gen: session %s skipped (firstMessage=%v, msgLen=%d)",
+			id, firstMessage, len(req.Message))
+	}
+
 	a.Run(ctx, agent.RunInput{
 		History:      history,
 		Emit:         emit,
@@ -145,27 +175,10 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Content: collected.text, ToolCalls: collected.toolCallsJSON(), CreatedAt: now,
 	})
 
-	// On the first turn, summarize the user's question into a concise title so
-	// the sidebar shows something meaningful instead of "新对话". Best-effort:
-	// any failure keeps the default title; the stream is still open so we can
-	// push a `title` event for the client to update live.
-	if firstMessage && strings.TrimSpace(req.Message) != "" {
-		title, chunks, err := generateTitle(ctx, llmClient, req.Message)
-		switch {
-		case err != nil:
-			log.Printf("title-gen: session %s FAILED: %v", id, err)
-		case title == "":
-			log.Printf("title-gen: session %s empty title (%d chunks received, none had text)", id, chunks)
-		default:
-			now = time.Now().UTC().Format(time.RFC3339)
-			_ = h.DB.RenameSession(id, title, now)
-			sse.Emit("title", map[string]any{"session_id": id, "title": title})
-			log.Printf("title-gen: session %s -> %q", id, title)
-		}
-	} else {
-		log.Printf("title-gen: session %s skipped (firstMessage=%v, msgLen=%d)",
-			id, firstMessage, len(req.Message))
-	}
+	// Wait for title generation to finish before closing the stream. It usually
+	// completes well before the reply since titles are short, so this rarely
+	// adds latency — but it must not race the stream teardown.
+	titleWg.Wait()
 }
 
 // generateTitle asks the model for a very short, plain summary of the user's

@@ -2,6 +2,8 @@ package server
 
 import (
 	"bufio"
+	"bytes"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,30 +16,38 @@ import (
 	"github.com/agent-rust/core/internal/tools/builtin"
 )
 
-// fakeToolCallServer streams a bash tool_call on the first request, then a
-// text answer on subsequent requests (after the tool result is fed back).
+// fakeToolCallServer serves two concurrent callers through one URL: the agent
+// loop (requests carry "tools") and the concurrent title generator (requests
+// carry no tools). Title-gen now overlaps the reply, so we must route by the
+// request body — a global call counter would let the title request steal the
+// agent's tool_call response and the confirm flow would never trigger.
 func fakeToolCallServer(t *testing.T) *httptest.Server {
-	var calls int32
+	var chatCalls int32
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		isAgent := bytes.Contains(body, []byte(`"tools"`))
 		w.Header().Set("Content-Type", "text/event-stream")
 		f := w.(http.Flusher)
-		n := atomic.AddInt32(&calls, 1)
-		if n == 1 {
-			// respond with a bash tool_call
-			lines := []string{
+		var lines []string
+		switch {
+		case !isAgent:
+			// title-generation call: a short plain title.
+			lines = []string{
+				`data: {"choices":[{"delta":{"content":"测试标题"}}]}`,
+				`data: [DONE]`,
+			}
+		case atomic.AddInt32(&chatCalls, 1) == 1:
+			// first agent call: a bash tool_call.
+			lines = []string{
 				`data: {"choices":[{"delta":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"echo hi\"}"}}]}}]}`,
 				`data: [DONE]`,
 			}
-			for _, l := range lines {
-				_, _ = w.Write([]byte(l + "\n\n"))
-				f.Flush()
+		default:
+			// subsequent agent call (after the tool result): plain answer.
+			lines = []string{
+				`data: {"choices":[{"delta":{"content":"all done"}}]}`,
+				`data: [DONE]`,
 			}
-			return
-		}
-		// after tool result: plain text answer, then done
-		lines := []string{
-			`data: {"choices":[{"delta":{"content":"all done"}}]}`,
-			`data: [DONE]`,
 		}
 		for _, l := range lines {
 			_, _ = w.Write([]byte(l + "\n\n"))

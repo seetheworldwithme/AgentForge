@@ -32,6 +32,9 @@ type providerDTO struct {
 	ChatModel  string `json:"chat_model"`
 	EmbedModel string `json:"embed_model"`
 	IsDefault  bool   `json:"is_default"`
+	// Kind selects which endpoint /providers/test probes: "chat" (default)
+	// hits chat/completions; "embed" hits /embeddings. Other endpoints ignore it.
+	Kind string `json:"kind"`
 }
 
 func (h *ConfigHandler) listProviders(w http.ResponseWriter, r *http.Request) {
@@ -97,25 +100,61 @@ func (h *ConfigHandler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// testProvider validates that the given credentials can reach a chat
-// completion endpoint and stream a response. It does NOT persist anything;
-// the UI calls it before saving so the user gets immediate feedback.
+// testProvider validates that the given credentials can reach the right
+// endpoint and get a response. It branches on dto.Kind:
+//   - "embed": request one embedding from /embeddings (for vector models)
+//   - otherwise (chat, default): stream one "hi" through /chat/completions
+//
+// It does NOT persist anything; the UI calls it before saving so the user
+// gets immediate feedback. Embedding models can't answer chat completions, so
+// testing them through the chat path would wrongly report "model does not
+// exist".
 func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
 	var dto providerDTO
 	if err := json.NewDecoder(r.Body).Decode(&dto); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if dto.BaseURL == "" || dto.ChatModel == "" {
-		writeErr(w, http.StatusBadRequest, "base_url and chat_model are required")
+	if dto.BaseURL == "" {
+		writeErr(w, http.StatusBadRequest, "base_url is required")
+		return
+	}
+
+	kind := dto.Kind
+	if kind == "" {
+		kind = "chat"
+	}
+	var model string
+	switch kind {
+	case "embed":
+		model = dto.EmbedModel
+	default:
+		model = dto.ChatModel
+	}
+	if model == "" {
+		writeErr(w, http.StatusBadRequest, kind+"_model is required")
 		return
 	}
 
 	client := llm.NewOpenAIClient(llm.Config{
-		BaseURL: dto.BaseURL, APIKey: dto.APIKey, Model: dto.ChatModel,
+		BaseURL: dto.BaseURL, APIKey: dto.APIKey, Model: model,
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+
+	if kind == "embed" {
+		vecs, err := client.Embed(ctx, []string{"hi"})
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		if len(vecs) == 0 || len(vecs[0]) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "empty embedding"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
 
 	stream, err := client.ChatStream(ctx,
 		[]llm.Message{{Role: llm.RoleUser, Content: "hi"}},

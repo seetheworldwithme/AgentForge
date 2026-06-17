@@ -20,6 +20,21 @@ interface KBState {
   retrieve: (kbId: string, query: string, topK: number) => Promise<void>;
 }
 
+// Poll a KB's documents every 2s until none are "processing" (capped at ~10
+// min to match the server ingest timeout), so the UI refreshes to ready/failed
+// instead of freezing on a stale "processing" badge.
+function pollUntilSettled(get: () => KBState, kbId: string) {
+  let tries = 0;
+  const tick = async () => {
+    await get().loadDocs(kbId);
+    const docs = get().docsByKb[kbId] ?? [];
+    if (docs.some((d) => d.status === 'processing') && ++tries < 300) {
+      setTimeout(tick, 2000);
+    }
+  };
+  setTimeout(tick, 2000);
+}
+
 export const useKBStore = create<KBState>((set, get) => ({
   kbs: [],
   docsByKb: {},
@@ -42,9 +57,9 @@ export const useKBStore = create<KBState>((set, get) => ({
     set({ docsByKb: { ...get().docsByKb, [kbId]: await api.listDocuments(kbId) } }),
   upload: async (kbId, file) => {
     await api.uploadDocument(kbId, file);
-    // ingest runs async on the server; re-poll after a short delay.
+    // ingest runs async on the server; poll until it settles.
     await get().loadDocs(kbId);
-    setTimeout(() => get().loadDocs(kbId), 3000);
+    pollUntilSettled(get, kbId);
   },
   deleteDoc: async (kbId, docId) => {
     await api.deleteDocument(kbId, docId);
@@ -54,7 +69,7 @@ export const useKBStore = create<KBState>((set, get) => ({
   retryDoc: async (kbId, docId) => {
     await api.retryDocument(kbId, docId);
     await get().loadDocs(kbId);
-    setTimeout(() => get().loadDocs(kbId), 3000);
+    pollUntilSettled(get, kbId);
   },
   loadChunks: async (kbId, docId) =>
     set({ chunksByDoc: { ...get().chunksByDoc, [docId]: await api.listChunks(kbId, docId) } }),
