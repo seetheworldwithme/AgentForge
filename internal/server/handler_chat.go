@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -148,17 +150,30 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// any failure keeps the default title; the stream is still open so we can
 	// push a `title` event for the client to update live.
 	if firstMessage && strings.TrimSpace(req.Message) != "" {
-		if title := generateTitle(ctx, llmClient, req.Message); title != "" {
+		title, chunks, err := generateTitle(ctx, llmClient, req.Message)
+		switch {
+		case err != nil:
+			log.Printf("title-gen: session %s FAILED: %v", id, err)
+		case title == "":
+			log.Printf("title-gen: session %s empty title (%d chunks received, none had text)", id, chunks)
+		default:
 			now = time.Now().UTC().Format(time.RFC3339)
 			_ = h.DB.RenameSession(id, title, now)
 			sse.Emit("title", map[string]any{"session_id": id, "title": title})
+			log.Printf("title-gen: session %s -> %q", id, title)
 		}
+	} else {
+		log.Printf("title-gen: session %s skipped (firstMessage=%v, msgLen=%d)",
+			id, firstMessage, len(req.Message))
 	}
 }
 
 // generateTitle asks the model for a very short, plain summary of the user's
-// first message to use as a conversation title. Returns "" on any failure.
-func generateTitle(ctx context.Context, client llm.LLMClient, userMessage string) string {
+// first message to use as a conversation title. Returns the title (possibly ""),
+// the number of stream chunks received (diagnostic: >0 with empty text usually
+// means a reasoning model), and an error when the request itself failed or
+// timed out.
+func generateTitle(ctx context.Context, client llm.LLMClient, userMessage string) (string, int, error) {
 	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
@@ -168,16 +183,20 @@ func generateTitle(ctx context.Context, client llm.LLMClient, userMessage string
 		{Role: llm.RoleUser, Content: userMessage},
 	}, nil)
 	if err != nil {
-		return ""
+		return "", 0, fmt.Errorf("chat stream: %w", err)
 	}
 	var sb strings.Builder
+	chunks := 0
 	for chunk := range stream {
+		chunks++
 		if chunk.Text != "" {
 			sb.WriteString(chunk.Text)
 		}
 	}
-	title := sanitizeTitle(sb.String())
-	return title
+	if tctx.Err() == context.DeadlineExceeded {
+		return "", chunks, fmt.Errorf("timeout after 15s (received %d chunks)", chunks)
+	}
+	return sanitizeTitle(sb.String()), chunks, nil
 }
 
 // sanitizeTitle trims surrounding whitespace/quotes/punctuation and collapses
