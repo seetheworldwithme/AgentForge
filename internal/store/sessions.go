@@ -6,6 +6,7 @@ type Session struct {
 	ProviderID   string
 	KBID         string
 	ToolsEnabled int
+	WorkDir      string
 	CreatedAt    string
 	UpdatedAt    string
 }
@@ -24,30 +25,33 @@ type Message struct {
 }
 
 func (d *DB) CreateSession(s Session) error {
-	_, err := d.sql.Exec(`INSERT INTO sessions(id,title,provider_id,kb_id,tools_enabled,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?)`,
+	_, err := d.sql.Exec(`INSERT INTO sessions(id,title,provider_id,kb_id,tools_enabled,workdir,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?)`,
 		s.ID, s.Title, nullable(s.ProviderID), nullable(s.KBID),
-		s.ToolsEnabled, s.CreatedAt, s.UpdatedAt)
+		s.ToolsEnabled, nullable(s.WorkDir), s.CreatedAt, s.UpdatedAt)
 	return err
 }
 
 func (d *DB) GetSession(id string) (Session, error) {
-	row := d.sql.QueryRow(`SELECT id,title,provider_id,kb_id,tools_enabled,created_at,updated_at
+	row := d.sql.QueryRow(`SELECT id,title,provider_id,kb_id,tools_enabled,workdir,created_at,updated_at
 		FROM sessions WHERE id=?`, id)
 	var s Session
-	var prov, kb *string
-	err := row.Scan(&s.ID, &s.Title, &prov, &kb, &s.ToolsEnabled, &s.CreatedAt, &s.UpdatedAt)
+	var prov, kb, wd *string
+	err := row.Scan(&s.ID, &s.Title, &prov, &kb, &s.ToolsEnabled, &wd, &s.CreatedAt, &s.UpdatedAt)
 	if prov != nil {
 		s.ProviderID = *prov
 	}
 	if kb != nil {
 		s.KBID = *kb
 	}
+	if wd != nil {
+		s.WorkDir = *wd
+	}
 	return s, err
 }
 
 func (d *DB) ListSessions() ([]Session, error) {
-	rows, err := d.sql.Query(`SELECT id,title,provider_id,kb_id,tools_enabled,created_at,updated_at
+	rows, err := d.sql.Query(`SELECT id,title,provider_id,kb_id,tools_enabled,workdir,created_at,updated_at
 		FROM sessions ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -56,8 +60,8 @@ func (d *DB) ListSessions() ([]Session, error) {
 	var out []Session
 	for rows.Next() {
 		var s Session
-		var prov, kb *string
-		if err := rows.Scan(&s.ID, &s.Title, &prov, &kb, &s.ToolsEnabled, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var prov, kb, wd *string
+		if err := rows.Scan(&s.ID, &s.Title, &prov, &kb, &s.ToolsEnabled, &wd, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if prov != nil {
@@ -65,6 +69,9 @@ func (d *DB) ListSessions() ([]Session, error) {
 		}
 		if kb != nil {
 			s.KBID = *kb
+		}
+		if wd != nil {
+			s.WorkDir = *wd
 		}
 		out = append(out, s)
 	}

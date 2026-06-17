@@ -80,7 +80,47 @@ func Open(path string) (*DB, error) {
 	if _, err := sqlDB.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
-	return &DB{sql: sqlDB}, nil
+	db := &DB{sql: sqlDB}
+	if err := db.applyMigrations(); err != nil {
+		return nil, fmt.Errorf("apply migrations: %w", err)
+	}
+	return db, nil
+}
+
+// applyMigrations runs additive, idempotent schema patches for databases that
+// predate a column. Fresh databases already get these columns from schema.sql,
+// so each step guards itself with a column-existence check.
+func (d *DB) applyMigrations() error {
+	if err := d.ensureColumn("sessions", "workdir"); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ensureColumn adds col to table if it does not already exist.
+func (d *DB) ensureColumn(table, col string) error {
+	rows, err := d.sql.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt *string
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == col {
+			return nil // already present
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = d.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", table, col))
+	return err
 }
 
 func (d *DB) Close() error { return d.sql.Close() }

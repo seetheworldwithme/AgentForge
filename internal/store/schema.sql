@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     provider_id   TEXT REFERENCES providers(id),
     kb_id         TEXT,
     tools_enabled INTEGER DEFAULT 1,
+    workdir       TEXT,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL
 );

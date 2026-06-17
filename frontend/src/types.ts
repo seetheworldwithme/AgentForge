@@ -17,6 +17,7 @@ export interface Session {
   provider_id: string;
   kb_id?: string;
   tools_enabled: boolean;
+  workdir?: string;
 }
 
 export interface Message {

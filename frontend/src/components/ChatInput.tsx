@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
-import { api } from '../lib/api';
+import { useWorkDirStore } from '../stores/workdirStore';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [text, setText] = useState('');
-  const [tools, setTools] = useState(true);
   const [rag, setRag] = useState(false);
   const send = useSessionStore((s) => s.send);
   const streaming = useSessionStore((s) => s.streaming);
@@ -16,8 +15,11 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
 
   // 当前选中的模型；默认取 is_default 或第一个
   const [providerId, setProviderId] = useState<string>('');
-  // 工作目录
-  const [workDir, setWorkDir] = useState<string>('');
+  // 工作目录（共享状态，侧边栏分组也依赖它）
+  const workDir = useWorkDirStore((s) => s.workdir);
+  const wdLoaded = useWorkDirStore((s) => s.loaded);
+  const wdLoad = useWorkDirStore((s) => s.load);
+  const setWorkDir = useWorkDirStore((s) => s.setWorkDir);
 
   useEffect(() => {
     if (!loaded) load();
@@ -31,14 +33,14 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
 
   // 初始化读取当前工作目录
   useEffect(() => {
-    api.getWorkDir().then((r) => setWorkDir(r.workdir || '')).catch(() => {});
-  }, []);
+    if (!wdLoaded) wdLoad();
+  }, [wdLoaded, wdLoad]);
 
   const submit = () => {
     if (!text.trim() || streaming) return;
     if (!sessionId && !providerId) return;
     send(text, {
-      tools_enabled: tools,
+      tools_enabled: true,
       use_rag: rag,
       provider_id: providerId || undefined,
     });
@@ -55,8 +57,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       try {
         const dir = await w.go.main.DialogBinder.OpenDirectory();
         if (dir) {
-          await api.setWorkDir(dir);
-          setWorkDir(dir);
+          await setWorkDir(dir);
         }
       } catch {
         /* 用户取消或出错，忽略 */
@@ -67,8 +68,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     const dir = window.prompt('请输入工作目录的绝对路径', workDir);
     if (dir && dir.trim()) {
       try {
-        await api.setWorkDir(dir.trim());
-        setWorkDir(dir.trim());
+        await setWorkDir(dir.trim());
       } catch {
         /* 保存失败，忽略 */
       }
@@ -78,10 +78,6 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   return (
     <div className="border-t p-3">
       <div className="mb-2 flex gap-4 text-sm items-center">
-        <label className="flex items-center gap-1">
-          <input type="checkbox" checked={tools} onChange={(e) => setTools(e.target.checked)} />
-          Tools
-        </label>
         <label className="flex items-center gap-1">
           <input type="checkbox" checked={rag} onChange={(e) => setRag(e.target.checked)} />
           RAG
