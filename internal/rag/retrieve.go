@@ -2,13 +2,17 @@ package rag
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/store"
 )
 
-// Retriever implements agent.RAGRetriever over SQLite + sqlite-vec.
+// Retriever implements agent.RAGRetriever over SQLite + sqlite-vec. It resolves
+// the embed client per knowledge base (matching the model used at ingest time,
+// so query and document vectors share a dimension); EmbedClient is the fallback
+// for KBs that haven't bound a provider.
 type Retriever struct {
 	DB          *store.DB
 	EmbedClient llm.LLMClient
@@ -37,13 +41,33 @@ func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]
 	return out, nil
 }
 
+// embedClientForKB returns the embed client bound to the KB so retrieval uses
+// the same model (and dimension) as ingest, falling back to the default.
+func (r *Retriever) embedClientForKB(kbID string) llm.LLMClient {
+	if kb, err := r.DB.GetKB(kbID); err == nil && kb.EmbedProviderID != "" {
+		if p, err := r.DB.GetProvider(kb.EmbedProviderID); err == nil && p.EmbedModel != "" {
+			return llm.NewOpenAIClient(llm.Config{
+				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.EmbedModel,
+			})
+		}
+	}
+	return r.EmbedClient
+}
+
 func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]SearchHit, error) {
 	if k <= 0 {
 		k = 5
 	}
-	vecs, err := r.EmbedClient.Embed(ctx, []string{query})
-	if err != nil || len(vecs) == 0 {
-		return nil, err
+	client := r.embedClientForKB(kbID)
+	if client == nil {
+		return nil, fmt.Errorf("no embed provider configured for knowledge base")
+	}
+	vecs, err := client.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("embed query: %w", err)
+	}
+	if len(vecs) == 0 {
+		return nil, fmt.Errorf("embed query returned no vectors")
 	}
 	hits, err := r.DB.SearchVectors(store.SanitizeTableName(kbID), vecs[0], k)
 	if err != nil {
