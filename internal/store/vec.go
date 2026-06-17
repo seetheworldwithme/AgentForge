@@ -35,6 +35,18 @@ func (d *DB) InsertVector(table, chunkID string, vec []float32) error {
 	return err
 }
 
+func (d *DB) DeleteVectorsByChunkIDs(table string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	_, err := d.sql.Exec(fmt.Sprintf(`DELETE FROM %s WHERE chunk_id IN (`+placeholders(len(ids))+`)`, table), args...)
+	return err
+}
+
 // SearchVectors returns the top-k nearest chunk IDs by distance.
 func (d *DB) SearchVectors(table string, query []float32, k int) ([]VectorHit, error) {
 	blob, err := json.Marshal(query)

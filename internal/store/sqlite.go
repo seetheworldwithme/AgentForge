@@ -94,6 +94,9 @@ func (d *DB) applyMigrations() error {
 	if err := d.ensureColumn("sessions", "workdir"); err != nil {
 		return err
 	}
+	if err := d.ensureColumn("documents", "raw_path"); err != nil {
+		return err
+	}
 	return nil
 }
 

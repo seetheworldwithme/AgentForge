@@ -54,6 +54,7 @@ func main() {
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: engine,
 		EmbedClient: embedClient, RAG: ragRetriever, WorkDir: workDir,
+		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 
 	ln, err := net.Listen("tcp", *addr)

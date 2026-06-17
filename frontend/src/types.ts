@@ -39,21 +39,40 @@ export interface KnowledgeBase {
   embed_provider_id: string;
   chunk_size: number;
   chunk_overlap: number;
+  doc_count: number;
+  created_at: string;
 }
 
-// Note: the core's GET /api/kb/{id}/documents returns store.Document structs
-// *without* JSON tags, so the wire keys are the Go field names (PascalCase).
-// The doc status endpoint (/status) uses explicit snake_case keys instead.
 export interface Document {
-  ID: string;        // from listDocs (un-tagged store.Document)
-  KBID: string;
-  Filename: string;
-  FileSize: number;
-  MimeType: string;
-  Status: string;    // processing | ready | failed
-  ChunkCount: number;
-  Error?: string;
-  CreatedAt?: string;
+  id: string;
+  kb_id: string;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  status: 'processing' | 'ready' | 'failed' | string;
+  chunk_count: number;
+  error?: string;
+  raw_path?: string;
+  created_at?: string;
+}
+
+export interface ChunkPreview {
+  id?: string;
+  document_id?: string;
+  kb_id?: string;
+  ordinal: number;
+  text: string;
+  token_count?: number;
+  metadata?: string;
+}
+
+export interface RetrieveHit {
+  chunk_id: string;
+  document_id: string;
+  filename: string;
+  ordinal: number;
+  text: string;
+  distance: number;
 }
 
 // Chat SSE event names emitted by the agent loop (internal/agent/agent.go).

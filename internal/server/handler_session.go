@@ -5,10 +5,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/oklog/ulid/v2"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
+	"github.com/go-chi/chi/v5"
+	"github.com/oklog/ulid/v2"
 )
 
 type SessionHandler struct {
@@ -96,7 +96,14 @@ func (h *SessionHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := h.DB.RenameSession(id, dto.Title, now); err != nil {
+	toolsEnabled := 0
+	if dto.ToolsEnabled {
+		toolsEnabled = 1
+	}
+	if err := h.DB.UpdateSession(store.Session{
+		ID: id, Title: dto.Title, ProviderID: dto.ProviderID, KBID: dto.KBID,
+		ToolsEnabled: toolsEnabled, UpdatedAt: now,
+	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}

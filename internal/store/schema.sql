@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS documents (
     status      TEXT NOT NULL,
     chunk_count INTEGER DEFAULT 0,
     error       TEXT,
+    raw_path    TEXT,
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);

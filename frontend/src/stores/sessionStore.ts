@@ -15,7 +15,7 @@ interface SessionState {
   newChat: () => void;
   remove: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
-  send: (text: string, opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string }) => Promise<void>;
+  send: (text: string, opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string; kb_id?: string }) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -62,10 +62,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const sess = await api.createSession({
         title: '新对话',
         provider_id: opts.provider_id,
+        kb_id: opts.kb_id,
         tools_enabled: opts.tools_enabled,
       });
       id = sess.id;
       set({ sessions: [sess, ...get().sessions], currentId: id });
+    } else if (opts.kb_id !== undefined) {
+      const current = get().sessions.find((s) => s.id === id);
+      if (current && (current.kb_id ?? '') !== opts.kb_id) {
+        const updated = await api.updateSession(id, {
+          title: current.title,
+          provider_id: current.provider_id,
+          tools_enabled: current.tools_enabled,
+          kb_id: opts.kb_id,
+        });
+        set({ sessions: get().sessions.map((s) => (s.id === id ? { ...s, ...updated } : s)) });
+      }
     }
     set({ streaming: true });
 

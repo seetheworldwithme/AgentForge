@@ -5,14 +5,15 @@ import { useWorkDirStore } from '../stores/workdirStore';
 import type { Session } from '../types';
 
 export function Sidebar({
+  activeView,
+  onViewChange,
   onOpenSettings,
-  onOpenKB,
 }: {
+  activeView: 'chat' | 'knowledge';
+  onViewChange: (view: 'chat' | 'knowledge') => void;
   onOpenSettings: () => void;
-  onOpenKB: () => void;
 }) {
   const sessions = useSessionStore((s) => s.sessions);
-  const currentId = useSessionStore((s) => s.currentId);
   const loadSessions = useSessionStore((s) => s.loadSessions);
   const newChat = useSessionStore((s) => s.newChat);
   const providers = useConfigStore((s) => s.providers);
@@ -68,23 +69,42 @@ export function Sidebar({
 
   return (
     <div className="w-64 border-r flex flex-col bg-gray-50">
+      <div className="border-b p-2">
+        <div className="grid grid-cols-3 gap-1 rounded bg-gray-100 p-1 text-sm">
+          <button
+            className={'rounded px-2 py-1.5 ' + (activeView === 'chat' ? 'bg-white shadow-sm' : 'text-gray-500')}
+            onClick={() => onViewChange('chat')}
+          >
+            对话
+          </button>
+          <button
+            className={'rounded px-2 py-1.5 ' + (activeView === 'knowledge' ? 'bg-white shadow-sm' : 'text-gray-500')}
+            onClick={() => onViewChange('knowledge')}
+          >
+            知识库
+          </button>
+          <button className="rounded px-2 py-1.5 text-gray-500" onClick={onOpenSettings}>
+            设置
+          </button>
+        </div>
+      </div>
       <div className="p-3 flex gap-2">
         <button
           className="flex-1 bg-blue-600 text-white rounded py-2 text-sm"
-          onClick={handleNewChat}
+          onClick={() => {
+            onViewChange('chat');
+            handleNewChat();
+          }}
         >
           + 新对话
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-2">
         {groupKeys.map((dir) => (
-          <SessionGroup key={dir || '__ungrouped__'} dir={dir} sessions={groups.get(dir) ?? []} currentId={currentId} />
+          <SessionGroup key={dir || '__ungrouped__'} dir={dir} sessions={groups.get(dir) ?? []} />
         ))}
       </div>
       <div className="border-t p-2 flex gap-2">
-        <button className="flex-1 text-sm border rounded py-1" onClick={onOpenKB}>
-          Knowledge
-        </button>
         <button className="flex-1 text-sm border rounded py-1" onClick={onOpenSettings}>
           设置
         </button>
@@ -94,23 +114,44 @@ export function Sidebar({
 }
 
 // 可折叠的目录分组：头部显示目录名（未选中目录则归入"未分组"），点击展开/合并。
-function SessionGroup({
-  dir,
-  sessions,
-  currentId,
-}: {
-  dir: string;
-  sessions: Session[];
-  currentId: string | null;
-}) {
+// 悬停真实工作目录时，右侧出现"新建对话 / 删除目录"两个按钮。
+function SessionGroup({ dir, sessions }: { dir: string; sessions: Session[] }) {
+  const currentId = useSessionStore((s) => s.currentId);
+  const newChat = useSessionStore((s) => s.newChat);
+  const remove = useSessionStore((s) => s.remove);
+  const workdir = useWorkDirStore((s) => s.workdir);
+  const setWorkDir = useWorkDirStore((s) => s.setWorkDir);
+
   const [open, setOpen] = useState(true);
+  const [confirming, setConfirming] = useState(false);
   const basename = dir.split(/[\\/]/).filter(Boolean).pop() || dir;
+
+  // 切到该目录后再新建：新对话会归属此目录（后端按当前全局目录打戳），工具也在该目录执行。
+  const onNew = async () => {
+    await setWorkDir(dir);
+    newChat();
+  };
+
+  // 删除整个目录分组：移除其下全部对话；若正是当前目录则清空，使空的当前分组也消失。
+  const onDelete = async () => {
+    for (const s of sessions) {
+      await remove(s.id);
+    }
+    if (dir === workdir) {
+      await setWorkDir('');
+    }
+    setConfirming(false);
+  };
+
+  const toggle = () => {
+    if (!confirming) setOpen((o) => !o);
+  };
 
   return (
     <div className="mb-1">
       <div
-        className="flex items-center gap-1 px-1 py-1 rounded cursor-pointer text-xs text-gray-500 hover:bg-gray-200 select-none"
-        onClick={() => setOpen((o) => !o)}
+        className="group flex items-center gap-1 px-1 py-1 rounded cursor-pointer text-xs text-gray-500 hover:bg-gray-200 select-none"
+        onClick={toggle}
         title={dir || '未分组'}
       >
         <span
@@ -120,7 +161,59 @@ function SessionGroup({
           ▶
         </span>
         <span className="flex-1 truncate">{dir ? `📁 ${basename}` : '未分组'}</span>
-        <span className="text-[10px] text-gray-400">{sessions.length}</span>
+        {confirming ? (
+          <span className="flex items-center gap-1">
+            <span className="text-red-500">删除全部?</span>
+            <button
+              className="hover:text-red-700 text-red-600"
+              title="确认删除"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+            >
+              ✓
+            </button>
+            <button
+              className="hover:text-gray-700"
+              title="取消"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirming(false);
+              }}
+            >
+              ✗
+            </button>
+          </span>
+        ) : (
+          <span className="flex items-center gap-1">
+            {dir && (
+              <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+                <button
+                  className="hover:text-blue-600"
+                  title="在此目录新建对话"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onNew();
+                  }}
+                >
+                  ＋
+                </button>
+                <button
+                  className="hover:text-red-600"
+                  title="删除该目录下全部对话"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirming(true);
+                  }}
+                >
+                  🗑
+                </button>
+              </span>
+            )}
+            <span className="text-[10px] text-gray-400">{sessions.length}</span>
+          </span>
+        )}
       </div>
       {open &&
         sessions.map((s) => (

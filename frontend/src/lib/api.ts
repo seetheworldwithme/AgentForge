@@ -1,5 +1,13 @@
 import { baseUrl } from './port';
-import type { Provider, Session, Message, KnowledgeBase, Document } from '../types';
+import type {
+  Provider,
+  Session,
+  Message,
+  KnowledgeBase,
+  Document,
+  ChunkPreview,
+  RetrieveHit,
+} from '../types';
 
 // All network I/O lives here. Components/stores never call fetch directly.
 
@@ -58,8 +66,18 @@ export const api = {
   // --- knowledge bases ---
   listKBs: () => jget<KnowledgeBase[]>('/api/kb'),
   createKB: (k: Partial<KnowledgeBase>) => jpost<KnowledgeBase>('/api/kb', k),
+  updateKB: (id: string, k: Partial<KnowledgeBase>) => jput<KnowledgeBase>(`/api/kb/${id}`, k),
   deleteKB: (id: string) => jdel(`/api/kb/${id}`),
   listDocuments: (kbId: string) => jget<Document[]>(`/api/kb/${kbId}/documents`),
+  deleteDocument: (kbId: string, docId: string) => jdel(`/api/kb/${kbId}/documents/${docId}`),
+  retryDocument: (kbId: string, docId: string) =>
+    jpost<{ document_id: string; status: string }>(`/api/kb/${kbId}/documents/${docId}/retry`, {}),
+  listChunks: (kbId: string, docId: string) =>
+    jget<ChunkPreview[]>(`/api/kb/${kbId}/documents/${docId}/chunks`),
+  chunkPreview: (kbId: string, body: { text: string; chunk_size: number; chunk_overlap: number }) =>
+    jpost<ChunkPreview[]>(`/api/kb/${kbId}/chunk-preview`, body),
+  retrieve: (kbId: string, body: { query: string; top_k: number }) =>
+    jpost<RetrieveHit[]>(`/api/kb/${kbId}/retrieve`, body),
   docStatus: (kbId: string, docId: string) =>
     jget<{ status: string; chunk_count: number; error?: string }>(
       `/api/kb/${kbId}/documents/${docId}/status`,

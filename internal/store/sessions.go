@@ -16,9 +16,9 @@ type Message struct {
 	SessionID  string `json:"session_id"`
 	Role       string `json:"role"`
 	Content    string `json:"content"`
-	ToolCalls  string `json:"tool_calls"`   // JSON
+	ToolCalls  string `json:"tool_calls"` // JSON
 	ToolCallID string `json:"tool_call_id"`
-	Citations  string `json:"citations"`    // JSON
+	Citations  string `json:"citations"` // JSON
 	TokensIn   int    `json:"tokens_in"`
 	TokensOut  int    `json:"tokens_out"`
 	CreatedAt  string `json:"created_at"`
@@ -80,6 +80,15 @@ func (d *DB) ListSessions() ([]Session, error) {
 
 func (d *DB) DeleteSession(id string) error {
 	_, err := d.sql.Exec(`DELETE FROM sessions WHERE id=?`, id)
+	return err
+}
+
+func (d *DB) UpdateSession(s Session) error {
+	_, err := d.sql.Exec(`UPDATE sessions
+		SET title=?, provider_id=?, kb_id=?, tools_enabled=?, updated_at=?
+		WHERE id=?`,
+		s.Title, nullable(s.ProviderID), nullable(s.KBID), s.ToolsEnabled,
+		s.UpdatedAt, s.ID)
 	return err
 }
 

@@ -1,3 +1,9 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .field {
+    @apply w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-500;
+  }
+}

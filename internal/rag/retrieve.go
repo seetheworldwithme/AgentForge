@@ -14,7 +14,30 @@ type Retriever struct {
 	EmbedClient llm.LLMClient
 }
 
+type SearchHit struct {
+	ChunkID    string
+	DocumentID string
+	Filename   string
+	Ordinal    int
+	Text       string
+	Distance   float32
+}
+
 func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]agent.RetrievedChunk, error) {
+	hits, err := r.Search(ctx, kbID, query, k)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agent.RetrievedChunk, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, agent.RetrievedChunk{
+			ID: h.ChunkID, Text: h.Text, DocID: h.DocumentID, Filename: h.Filename,
+		})
+	}
+	return out, nil
+}
+
+func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]SearchHit, error) {
 	if k <= 0 {
 		k = 5
 	}
@@ -37,12 +60,17 @@ func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]
 	if err != nil {
 		return nil, err
 	}
+	dist := make(map[string]float32, len(hits))
+	for _, h := range hits {
+		dist[h.ID] = h.Distance
+	}
 	// attach filename via document lookup
-	out := make([]agent.RetrievedChunk, 0, len(chunks))
+	out := make([]SearchHit, 0, len(chunks))
 	for _, c := range chunks {
 		doc, _ := r.DB.GetDocument(c.DocID)
-		out = append(out, agent.RetrievedChunk{
-			ID: c.ID, Text: c.Text, DocID: c.DocID, Filename: doc.Filename,
+		out = append(out, SearchHit{
+			ChunkID: c.ID, DocumentID: c.DocID, Filename: doc.Filename,
+			Ordinal: c.Ordinal, Text: c.Text, Distance: dist[c.ID],
 		})
 	}
 	return out, nil

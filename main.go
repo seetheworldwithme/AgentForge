@@ -70,6 +70,7 @@ func main() {
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: engine,
 		EmbedClient: embedClient, RAG: ragRetriever, WorkDir: workDir,
+		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 
 	// Start the core HTTP server on a random loopback port. The frontend

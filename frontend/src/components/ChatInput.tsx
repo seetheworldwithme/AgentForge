@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
+import { useKBStore } from '../stores/kbStore';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [text, setText] = useState('');
-  const [rag, setRag] = useState(false);
+  const [useRag, setUseRag] = useState(false);
+  const [kbId, setKbId] = useState('');
   const send = useSessionStore((s) => s.send);
   const streaming = useSessionStore((s) => s.streaming);
+  const sessions = useSessionStore((s) => s.sessions);
 
   const providers = useConfigStore((s) => s.providers);
   const loaded = useConfigStore((s) => s.loaded);
@@ -20,6 +23,8 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const wdLoaded = useWorkDirStore((s) => s.loaded);
   const wdLoad = useWorkDirStore((s) => s.load);
   const setWorkDir = useWorkDirStore((s) => s.setWorkDir);
+  const kbs = useKBStore((s) => s.kbs);
+  const loadKBs = useKBStore((s) => s.load);
 
   useEffect(() => {
     if (!loaded) load();
@@ -36,13 +41,24 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     if (!wdLoaded) wdLoad();
   }, [wdLoaded, wdLoad]);
 
+  useEffect(() => {
+    loadKBs();
+  }, [loadKBs]);
+
+  useEffect(() => {
+    const session = sessions.find((s) => s.id === sessionId);
+    setKbId(session?.kb_id ?? '');
+    setUseRag(!!session?.kb_id);
+  }, [sessionId, sessions]);
+
   const submit = () => {
     if (!text.trim() || streaming) return;
     if (!sessionId && !providerId) return;
     send(text, {
       tools_enabled: true,
-      use_rag: rag,
+      use_rag: !!kbId && useRag,
       provider_id: providerId || undefined,
+      kb_id: kbId,
     });
     setText('');
   };
@@ -78,9 +94,30 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   return (
     <div className="border-t p-3">
       <div className="mb-2 flex gap-4 text-sm items-center">
-        <label className="flex items-center gap-1">
-          <input type="checkbox" checked={rag} onChange={(e) => setRag(e.target.checked)} />
-          RAG
+        <select
+          className="max-w-[260px] rounded border px-2 py-1 text-xs"
+          value={kbId}
+          onChange={(e) => {
+            setKbId(e.target.value);
+            setUseRag(!!e.target.value);
+          }}
+          title="选择本会话使用的知识库"
+        >
+          <option value="">不使用知识库</option>
+          {kbs.map((kb) => (
+            <option key={kb.id} value={kb.id}>
+              {kb.name}
+            </option>
+          ))}
+        </select>
+        <label className={'flex items-center gap-1 ' + (!kbId ? 'text-gray-400' : '')}>
+          <input
+            type="checkbox"
+            checked={!!kbId && useRag}
+            disabled={!kbId}
+            onChange={(e) => setUseRag(e.target.checked)}
+          />
+          本条检索
         </label>
         {/* 选择工作目录 */}
         <button
