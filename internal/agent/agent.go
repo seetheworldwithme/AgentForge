@@ -9,6 +9,13 @@ import (
 	"github.com/agent-rust/core/internal/tools"
 )
 
+// ragSimilarityThreshold drops retrieved chunks whose cosine similarity is below
+// this value before injecting them into the prompt. Based on observation:
+// relevant hits land ~0.45 while noise sits ~0.27-0.30, so 0.3 separates them.
+// When everything falls below it, nothing is injected (the model answers from
+// its own knowledge) instead of polluting the prompt with low-quality excerpts.
+const ragSimilarityThreshold float32 = 0.3
+
 type Agent struct {
 	deps Deps
 }
@@ -59,12 +66,17 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 	}
 
 	for iter := 0; iter < a.deps.MaxIter; iter++ {
-		// Optionally inject RAG context before the model turn.
+		// Optionally inject RAG context before the model turn. Low-similarity
+		// chunks are filtered out; if none clear the threshold, nothing is
+		// injected so the model answers from its own knowledge.
 		if in.UseRAG && a.deps.RAG != nil && in.KBID != "" {
 			query := lastUserText(history)
 			chunks, err := a.deps.RAG.Retrieve(ctx, in.KBID, query, 5)
-			if err == nil && len(chunks) > 0 {
-				history = prependRAGContext(history, chunks)
+			if err == nil {
+				chunks = filterRAGChunks(chunks, ragSimilarityThreshold)
+				if len(chunks) > 0 {
+					history = prependRAGContext(history, chunks)
+				}
 			}
 		}
 
@@ -140,6 +152,18 @@ func lastUserText(history []llm.Message) string {
 		}
 	}
 	return ""
+}
+
+// filterRAGChunks keeps chunks at or above the similarity threshold, preserving
+// the similarity-descending order returned by the retriever.
+func filterRAGChunks(chunks []RetrievedChunk, threshold float32) []RetrievedChunk {
+	kept := make([]RetrievedChunk, 0, len(chunks))
+	for _, c := range chunks {
+		if c.Similarity >= threshold {
+			kept = append(kept, c)
+		}
+	}
+	return kept
 }
 
 func prependRAGContext(history []llm.Message, chunks []RetrievedChunk) []llm.Message {

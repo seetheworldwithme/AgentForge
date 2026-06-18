@@ -72,7 +72,7 @@ export interface RetrieveHit {
   filename: string;
   ordinal: number;
   text: string;
-  distance: number;
+  similarity: number;
 }
 
 // Chat SSE event names emitted by the agent loop (internal/agent/agent.go).

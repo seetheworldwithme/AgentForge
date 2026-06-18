@@ -27,6 +27,12 @@ type SearchHit struct {
 	Distance   float32
 }
 
+// CosineSimilarity converts an L2 distance reported by a vec0 index (on
+// normalized embeddings) to a cosine similarity in [-1, 1]: similarity = 1 - d²/2.
+// L2 and cosine are monotonic on unit vectors, so ranking is unchanged; the
+// number is just on the intuitive "higher = more relevant" scale.
+func CosineSimilarity(l2 float32) float32 { return 1 - l2*l2/2 }
+
 func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]agent.RetrievedChunk, error) {
 	hits, err := r.Search(ctx, kbID, query, k)
 	if err != nil {
@@ -36,6 +42,7 @@ func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]
 	for _, h := range hits {
 		out = append(out, agent.RetrievedChunk{
 			ID: h.ChunkID, Text: h.Text, DocID: h.DocumentID, Filename: h.Filename,
+			Similarity: CosineSimilarity(h.Distance),
 		})
 	}
 	return out, nil
@@ -84,17 +91,19 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 	if err != nil {
 		return nil, err
 	}
-	dist := make(map[string]float32, len(hits))
-	for _, h := range hits {
-		dist[h.ID] = h.Distance
-	}
-	// attach filename via document lookup
-	out := make([]SearchHit, 0, len(chunks))
+	// index chunks by id so results keep SearchVectors' similarity-descending
+	// order (WHERE id IN (...) does not preserve row order).
+	byID := make(map[string]store.Chunk, len(chunks))
 	for _, c := range chunks {
+		byID[c.ID] = c
+	}
+	out := make([]SearchHit, 0, len(hits))
+	for _, h := range hits {
+		c := byID[h.ID]
 		doc, _ := r.DB.GetDocument(c.DocID)
 		out = append(out, SearchHit{
 			ChunkID: c.ID, DocumentID: c.DocID, Filename: doc.Filename,
-			Ordinal: c.Ordinal, Text: c.Text, Distance: dist[c.ID],
+			Ordinal: c.Ordinal, Text: c.Text, Distance: h.Distance,
 		})
 	}
 	return out, nil

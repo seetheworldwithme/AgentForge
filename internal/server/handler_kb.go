@@ -85,7 +85,7 @@ type retrieveHitDTO struct {
 	Filename   string  `json:"filename"`
 	Ordinal    int     `json:"ordinal"`
 	Text       string  `json:"text"`
-	Distance   float32 `json:"distance"`
+	Similarity float32 `json:"similarity"`
 }
 
 func (h *KBHandler) list(w http.ResponseWriter, r *http.Request) {
@@ -436,7 +436,7 @@ func (h *KBHandler) search(ctx context.Context, kbID, query string, topK int) ([
 		for i, h := range hits {
 			out[i] = retrieveHitDTO{
 				ChunkID: h.ChunkID, DocumentID: h.DocumentID, Filename: h.Filename,
-				Ordinal: h.Ordinal, Text: h.Text, Distance: h.Distance,
+				Ordinal: h.Ordinal, Text: h.Text, Similarity: rag.CosineSimilarity(h.Distance),
 			}
 		}
 		return out, nil
@@ -454,7 +454,7 @@ func (h *KBHandler) search(ctx context.Context, kbID, query string, topK int) ([
 			}
 			out[i] = retrieveHitDTO{
 				ChunkID: c.ID, DocumentID: c.DocID, Filename: c.Filename,
-				Ordinal: ordinal, Text: c.Text, Distance: 0,
+				Ordinal: ordinal, Text: c.Text, Similarity: rag.CosineSimilarity(0),
 			}
 		}
 		return out, nil

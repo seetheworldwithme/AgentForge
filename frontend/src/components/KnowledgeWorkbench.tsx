@@ -343,7 +343,7 @@ export function KnowledgeWorkbench() {
                     <div key={hit.chunk_id} className="rounded border border-gray-200 p-3">
                       <div className="mb-2 flex items-center justify-between gap-2 text-xs text-gray-500">
                         <span className="truncate">{hit.filename} · #{hit.ordinal}</span>
-                        <span>{hit.distance.toFixed(4)}</span>
+                        <span>相似度 {(hit.similarity * 100).toFixed(1)}%</span>
                       </div>
                       <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-sm">{hit.text}</p>
                     </div>

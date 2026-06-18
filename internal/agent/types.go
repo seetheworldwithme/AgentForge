@@ -18,10 +18,11 @@ type RAGRetriever interface {
 }
 
 type RetrievedChunk struct {
-	ID       string
-	Text     string
-	DocID    string
-	Filename string
+	ID         string
+	Text       string
+	DocID      string
+	Filename   string
+	Similarity float32 // cosine similarity in [-1, 1]; higher = more relevant, 0 when unknown
 }
 
 // Deps bundles the orchestrator's dependencies (DI).
