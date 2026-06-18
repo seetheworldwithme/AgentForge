@@ -83,9 +83,14 @@ export function ProviderSettings() {
   const [vendorKey, setVendorKey] = useState<string>('openai');
   // 模型类别：chat / embed
   const [category, setCategory] = useState<ModelCategory>('chat');
+  const [titleProviderId, setTitleProviderId] = useState('');
 
   useEffect(() => {
     if (!loaded) load();
+    api
+      .getTitleProvider()
+      .then((r) => setTitleProviderId(r.provider_id || ''))
+      .catch(() => {});
   }, [loaded, load]);
 
   const resetForm = () => {
@@ -250,6 +255,35 @@ export function ProviderSettings() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* 标题生成模型：独立 provider，与主对话并行、互不卡顿 */}
+      <div className="rounded border p-3 text-sm">
+        <label className="block text-xs text-gray-600 mb-1">标题生成模型</label>
+        <select
+          className="border rounded p-1.5 text-sm w-full"
+          value={titleProviderId}
+          onChange={async (e) => {
+            const v = e.target.value;
+            setTitleProviderId(v);
+            try {
+              await api.setTitleProvider(v);
+              setStatus({ kind: 'success', message: '标题模型已更新' });
+            } catch {
+              setStatus({ kind: 'error', message: '标题模型保存失败' });
+            }
+          }}
+        >
+          <option value="">未设置（跟随各会话的主对话模型）</option>
+          {providers.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} · {p.chat_model}
+            </option>
+          ))}
+        </select>
+        <p className="text-xs text-gray-400 mt-1">
+          用独立的模型生成会话标题，与主对话并行、互不卡顿。建议选一个快的小模型。
+        </p>
       </div>
 
       {/* 添加 / 编辑 弹窗 */}

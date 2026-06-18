@@ -131,32 +131,25 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 
-	// Kick off title generation concurrently with the main reply. On the first
-	// turn, summarize the user's question into a concise title so the sidebar
-	// shows something meaningful instead of "新对话". Best-effort: any failure
-	// keeps the default title. This is an independent LLM call that touches
-	// neither the Gate nor agent state, so it safely overlaps the agent loop;
-	// SSE writes are serialized by SSEWriter's mutex.
+	// Generate the title concurrently with the reply using a SEPARATE provider
+	// (the configured title provider, falling back to this chat's provider).
+	// Two different providers are two independent connections, so neither call
+	// queues behind the other — the title no longer starves on a single-stream
+	// chat provider. Best-effort: on failure/timeout it degrades to a local
+	// excerpt so the title is never missing.
+	wantTitle := firstMessage && strings.TrimSpace(req.Message) != ""
 	var titleWg sync.WaitGroup
-	if firstMessage && strings.TrimSpace(req.Message) != "" {
+	if wantTitle {
 		titleWg.Add(1)
 		go func() {
 			defer titleWg.Done()
-			title, chunks, err := generateTitle(ctx, llmClient, req.Message)
-			switch {
-			case err != nil:
-				log.Printf("title-gen: session %s FAILED: %v", id, err)
-			case title == "":
-				log.Printf("title-gen: session %s empty title (%d chunks received, none had text)", id, chunks)
-			default:
-				_ = h.DB.RenameSession(id, title, time.Now().UTC().Format(time.RFC3339))
-				sse.Emit("title", map[string]any{"session_id": id, "title": title})
-				log.Printf("title-gen: session %s -> %q", id, title)
-			}
+			title := generateTitleBestEffort(ctx, h.titleClient(llmClient), req.Message)
+			_ = h.DB.RenameSession(id, title, time.Now().UTC().Format(time.RFC3339))
+			sse.Emit("title", map[string]any{"session_id": id, "title": title})
+			log.Printf("title-gen: session %s -> %q", id, title)
 		}()
-	} else {
-		log.Printf("title-gen: session %s skipped (firstMessage=%v, msgLen=%d)",
-			id, firstMessage, len(req.Message))
+	} else if firstMessage {
+		log.Printf("title-gen: session %s skipped (msgLen=%d)", id, len(req.Message))
 	}
 
 	a.Run(ctx, agent.RunInput{
@@ -175,10 +168,23 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		Content: collected.text, ToolCalls: collected.toolCallsJSON(), CreatedAt: now,
 	})
 
-	// Wait for title generation to finish before closing the stream. It usually
-	// completes well before the reply since titles are short, so this rarely
-	// adds latency — but it must not race the stream teardown.
+	// Wait for the concurrent title generation to settle (LLM or fallback)
+	// before the stream closes, so the client always receives a title event.
 	titleWg.Wait()
+}
+
+// titleClient returns the provider dedicated to title generation, falling back
+// to the given chat client when none is configured. Using a separate provider
+// lets the title call run on its own connection in parallel with the reply.
+func (h *ChatHandler) titleClient(fallback llm.LLMClient) llm.LLMClient {
+	if id, err := h.DB.GetSetting("title_provider_id"); err == nil && id != "" {
+		if p, err := h.DB.GetProvider(id); err == nil && p.ChatModel != "" {
+			return llm.NewOpenAIClient(llm.Config{
+				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
+			})
+		}
+	}
+	return fallback
 }
 
 // generateTitle asks the model for a very short, plain summary of the user's
@@ -210,6 +216,31 @@ func generateTitle(ctx context.Context, client llm.LLMClient, userMessage string
 		return "", chunks, fmt.Errorf("timeout after 15s (received %d chunks)", chunks)
 	}
 	return sanitizeTitle(sb.String()), chunks, nil
+}
+
+// generateTitleBestEffort asks the LLM for a title; on any failure, empty
+// result, or cancellation it falls back to a local excerpt of the user's
+// message so the sidebar always gets a title instead of staying "新对话".
+func generateTitleBestEffort(ctx context.Context, client llm.LLMClient, userMessage string) string {
+	if title, chunks, err := generateTitle(ctx, client, userMessage); err == nil && title != "" {
+		return title
+	} else if err != nil {
+		log.Printf("title-gen: LLM failed (%d chunks, %v); using fallback", chunks, err)
+	} else {
+		log.Printf("title-gen: LLM returned empty (%d chunks); using fallback", chunks)
+	}
+	return fallbackTitle(userMessage)
+}
+
+// fallbackTitle derives a title locally from the user's first message (first
+// line, cleaned and capped): instant, no LLM — used when the title call fails
+// or times out.
+func fallbackTitle(userMessage string) string {
+	s := strings.TrimSpace(userMessage)
+	if i := strings.IndexAny(s, "\n\r"); i >= 0 {
+		s = s[:i]
+	}
+	return sanitizeTitle(s)
 }
 
 // sanitizeTitle trims surrounding whitespace/quotes/punctuation and collapses

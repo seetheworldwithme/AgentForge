@@ -22,6 +22,8 @@ func (h *ConfigHandler) Routes(r chi.Router) {
 	r.Post("/providers/test", h.testProvider)
 	r.Put("/providers/{id}", h.updateProvider)
 	r.Delete("/providers/{id}", h.deleteProvider)
+	r.Get("/settings/title-provider", h.getTitleProvider)
+	r.Put("/settings/title-provider", h.setTitleProvider)
 }
 
 type providerDTO struct {
@@ -178,6 +180,29 @@ func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// getTitleProvider / setTitleProvider expose which provider is dedicated to
+// conversation-title generation. The chat handler resolves it per request so
+// the title call runs on its own connection, parallel to the main reply.
+func (h *ConfigHandler) getTitleProvider(w http.ResponseWriter, r *http.Request) {
+	id, _ := h.DB.GetSetting("title_provider_id")
+	writeJSON(w, http.StatusOK, map[string]any{"provider_id": id})
+}
+
+func (h *ConfigHandler) setTitleProvider(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ProviderID string `json:"provider_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.DB.SetSetting("title_provider_id", body.ProviderID); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"provider_id": body.ProviderID})
 }
 
 func toProviderDTO(p store.Provider) providerDTO {

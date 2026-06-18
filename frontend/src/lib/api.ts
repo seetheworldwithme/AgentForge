@@ -48,6 +48,11 @@ export const api = {
   deleteProvider: (id: string) => jdel(`/api/providers/${id}`),
   updateProvider: (id: string, p: Omit<Provider, 'id'>) =>
     jput<Provider>(`/api/providers/${id}`, p),
+  // The provider dedicated to conversation-title generation. Separate from the
+  // chat provider so the title call runs on its own connection in parallel.
+  getTitleProvider: () => jget<{ provider_id: string }>('/api/settings/title-provider'),
+  setTitleProvider: (provider_id: string) =>
+    jput<{ provider_id: string }>('/api/settings/title-provider', { provider_id }),
   // Validate connectivity before saving. `kind` picks the probe path:
   // "chat" (default) sends one chat completion; "embed" requests one
   // embedding. Returns ok/error; never throws on auth failure — the UI

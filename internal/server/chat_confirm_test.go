@@ -106,7 +106,7 @@ func TestChatConfirmFlow(t *testing.T) {
 	// its request_id and resolve it; keep collecting the rest of the stream.
 	sc := bufio.NewScanner(chatResp.Body)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var sawConfirmReq, sawToolResult, sawAllDone, sawDone bool
+	var sawConfirmReq, sawToolResult, sawAllDone, sawDone, sawTitle bool
 	for sc.Scan() {
 		line := sc.Text()
 		if strings.HasPrefix(line, "event: confirm_req") {
@@ -137,10 +137,16 @@ func TestChatConfirmFlow(t *testing.T) {
 		if strings.HasPrefix(line, "event: done") {
 			sawDone = true
 		}
+		if strings.HasPrefix(line, "event: title") {
+			sawTitle = true
+		}
 	}
 
 	if !sawConfirmReq {
 		t.Error("missing confirm_req event")
+	}
+	if !sawTitle {
+		t.Error("missing title event (first turn must auto-generate a title)")
 	}
 	if !sawToolResult {
 		t.Error("missing tool_result event")
