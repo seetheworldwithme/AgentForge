@@ -60,6 +60,7 @@ const EMPTY = {
   api_key: '',
   chat_model: 'gpt-4o-mini',
   embed_model: 'text-embedding-3-small',
+  vision_model: '',
   is_default: true,
 };
 
@@ -119,6 +120,7 @@ export function ProviderSettings() {
       api_key: p.api_key,
       chat_model: p.chat_model,
       embed_model: p.embed_model ?? '',
+      vision_model: p.vision_model ?? '',
       is_default: p.is_default,
     });
     setStatus({ kind: 'idle' });
@@ -387,6 +389,13 @@ export function ProviderSettings() {
                   />
                 )}
               </div>
+
+              <input
+                className="border rounded p-1.5 text-sm"
+                placeholder="Vision model（可选，知识库图片描述用，需支持 vision 如 gpt-4o）"
+                value={form.vision_model}
+                onChange={(e) => setField('vision_model', e.target.value)}
+              />
 
               <label className="flex items-center gap-1.5 text-sm">
                 <input

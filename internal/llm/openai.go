@@ -32,9 +32,20 @@ type chatReq struct {
 
 type rawMsg struct {
 	Role       string        `json:"role"`
-	Content    string        `json:"content,omitempty"`
+	Content    any           `json:"content,omitempty"` // string（纯文本）或 []contentPart（多模态）
 	ToolCalls  []rawToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
+}
+
+// contentPart 是 OpenAI 多模态 content 的一个片段（文本或图片）。
+type contentPart struct {
+	Type     string        `json:"type"` // "text" 或 "image_url"
+	Text     string        `json:"text,omitempty"`
+	ImageURL *imageURLPart `json:"image_url,omitempty"`
+}
+
+type imageURLPart struct {
+	URL string `json:"url"`
 }
 
 type rawTool struct {
@@ -62,7 +73,20 @@ type rawToolCallFunc struct {
 func toRawMessages(msgs []Message) []rawMsg {
 	out := make([]rawMsg, 0, len(msgs))
 	for _, m := range msgs {
-		rm := rawMsg{Role: string(m.Role), Content: m.Content, ToolCallID: m.ToolCallID}
+		rm := rawMsg{Role: string(m.Role), ToolCallID: m.ToolCallID}
+		if len(m.Images) > 0 {
+			// 多模态：content 是片段数组（文本 + 图片）。
+			parts := make([]contentPart, 0, len(m.Images)+1)
+			if m.Content != "" {
+				parts = append(parts, contentPart{Type: "text", Text: m.Content})
+			}
+			for _, img := range m.Images {
+				parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURLPart{URL: img.DataURL}})
+			}
+			rm.Content = parts
+		} else {
+			rm.Content = m.Content
+		}
 		for _, tc := range m.ToolCalls {
 			rm.ToolCalls = append(rm.ToolCalls, rawToolCall{
 				ID: tc.ID, Type: "function",
@@ -153,7 +177,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 			var ev struct {
 				Choices []struct {
 					Delta struct {
-						Content string `json:"content"`
+						Content   string `json:"content"`
 						ToolCalls []struct {
 							Index    int    `json:"index"`
 							ID       string `json:"id"`
@@ -241,4 +265,41 @@ func (c *OpenAIClient) Embed(ctx context.Context, inputs []string) ([][]float32,
 		vecs[i] = d.Embedding
 	}
 	return vecs, nil
+}
+
+// Chat 是非流式一次性调用，返回完整文本。用于 VLM 图片描述等场景。
+func (c *OpenAIClient) Chat(ctx context.Context, msgs []Message) (string, error) {
+	body, _ := json.Marshal(chatReq{
+		Model: c.cfg.Model, Messages: toRawMessages(msgs), Stream: false,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(c.cfg.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.cfg.APIKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("llm http %d: %s", resp.StatusCode, string(b))
+	}
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if len(out.Choices) == 0 {
+		return "", fmt.Errorf("llm returned no choices")
+	}
+	return out.Choices[0].Message.Content, nil
 }

@@ -61,6 +61,28 @@ func (r *Retry) Embed(ctx context.Context, inputs []string) ([][]float32, error)
 	return nil, fmt.Errorf("after %d retries: %w", r.max, lastErr)
 }
 
+func (r *Retry) Chat(ctx context.Context, msgs []Message) (string, error) {
+	var lastErr error
+	for i := 0; i < r.max; i++ {
+		s, err := r.inner.Chat(ctx, msgs)
+		if err == nil {
+			return s, nil
+		}
+		lastErr = err
+		if !isTransient(err) {
+			return "", err
+		}
+		if r.wait > 0 {
+			select {
+			case <-time.After(r.wait << uint(i)): // exponential-ish backoff
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
+	return "", fmt.Errorf("after %d retries: %w", r.max, lastErr)
+}
+
 // isTransient returns true for 429 / 5xx style errors (matched by substring).
 func isTransient(err error) bool {
 	msg := err.Error()

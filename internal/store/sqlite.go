@@ -104,6 +104,9 @@ func (d *DB) applyMigrations() error {
 	if err := d.ensureColumn("documents", "raw_path"); err != nil {
 		return err
 	}
+	if err := d.ensureColumn("providers", "vision_model"); err != nil {
+		return err
+	}
 	return nil
 }
 

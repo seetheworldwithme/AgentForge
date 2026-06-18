@@ -348,7 +348,7 @@ func (h *KBHandler) retrieve(w http.ResponseWriter, r *http.Request) {
 }
 
 func pickParser(filename, mime string) parser.Parser {
-	candidates := []parser.Parser{parser.PDF{}, parser.Markdown{}, parser.Txt{}}
+	candidates := []parser.Parser{parser.DOCX{}, parser.XLSX{}, parser.PDF{}, parser.Markdown{}, parser.Txt{}}
 	for _, c := range candidates {
 		if c.Supports(mime, filename) {
 			return c
@@ -377,6 +377,7 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 		DB: h.DB, Embed: embedClient, KBID: kbID,
 		ChunkSz: kb.ChunkSize, Overlap: kb.ChunkOverlap,
 		Parser: pickParser(doc.Filename, doc.MimeType),
+		Vision: h.visionClientForKB(kb),
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -394,6 +395,19 @@ func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) llm.LLMClient {
 		}
 	}
 	return h.EmbedClient
+}
+
+// visionClientForKB 返回 KB 绑定 provider 的 vision 模型客户端（用于把文档
+// 图片描述成文字）；没配 vision_model 时返回 nil（图片跳过）。
+func (h *KBHandler) visionClientForKB(kb store.KnowledgeBase) llm.LLMClient {
+	if kb.EmbedProviderID != "" {
+		if p, err := h.DB.GetProvider(kb.EmbedProviderID); err == nil && p.VisionModel != "" {
+			return llm.NewOpenAIClient(llm.Config{
+				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.VisionModel,
+			})
+		}
+	}
+	return nil
 }
 
 func (h *KBHandler) saveUpload(kbID, docID, filename string, raw []byte) (string, error) {

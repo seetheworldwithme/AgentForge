@@ -3,19 +3,22 @@ package rag
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
+	"sync"
 
-	"github.com/oklog/ulid/v2"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/rag/parser"
 	"github.com/agent-rust/core/internal/store"
+	"github.com/oklog/ulid/v2"
 )
 
 // Ingestor parses, chunks, embeds (batched), and stores a document.
 type Ingestor struct {
 	DB      *store.DB
 	Embed   llm.LLMClient
+	Vision  llm.LLMClient // 可选，用于把图片描述成文字（VLM）；nil 时图片跳过
 	KBID    string
 	ChunkSz int
 	Overlap int
@@ -31,11 +34,13 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 	if p == nil {
 		p = parser.Txt{}
 	}
-	text, err := p.Parse(bytes.NewReader(raw))
+	result, err := p.Parse(bytes.NewReader(raw))
 	if err != nil {
 		ing.fail(docID, "parse", 0, err)
 		return err
 	}
+	// 把图片占位符替换成 VLM 描述（按文档位置）；没配 VLM 或失败则清除。
+	text := ing.fillImagePlaceholders(ctx, docID, result)
 	chunks := Chunk(text, ing.chunkSize(), ing.overlap())
 	log.Printf("ingest: doc=%s parsed %d chars -> %d chunks", docID, len(text), len(chunks))
 
@@ -107,3 +112,61 @@ func (ing *Ingestor) overlap() int {
 }
 
 func vecTable(kbID string) string { return store.SanitizeTableName(kbID) }
+
+// 单文档最多描述这么多张图片，超出跳过（避免大文档把 VLM 打爆）。
+const maxImagesPerDoc = 20
+
+// fillImagePlaceholders 把 ParseResult 里的图片占位符替换成 VLM 描述（按位置）。
+// 没配 Vision、图片数超限或单图描述失败时，对应占位符替换为空（图片跳过）。
+func (ing *Ingestor) fillImagePlaceholders(ctx context.Context, docID string, res parser.ParseResult) string {
+	if len(res.Images) == 0 {
+		return parser.ReplacePlaceholders(res.Text, func(int) string { return "" })
+	}
+	descs := ing.describeImages(ctx, docID, res.Images)
+	return parser.ReplacePlaceholders(res.Text, func(i int) string {
+		if i < len(descs) && descs[i] != "" {
+			return "[图片：" + descs[i] + "]"
+		}
+		return ""
+	})
+}
+
+// describeImages 并发调用 VLM 描述每张图片，返回与输入等长的描述切片
+// （未配置/失败的位置为空字符串）。
+func (ing *Ingestor) describeImages(ctx context.Context, docID string, imgs []parser.ParsedImage) []string {
+	descs := make([]string, len(imgs))
+	if ing.Vision == nil {
+		log.Printf("ingest: doc=%s %d images skipped (no vision model)", docID, len(imgs))
+		return descs
+	}
+	n := len(imgs)
+	if n > maxImagesPerDoc {
+		log.Printf("ingest: doc=%s has %d images, describing first %d only", docID, n, maxImagesPerDoc)
+		n = maxImagesPerDoc
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			desc, err := ing.describeOneImage(ctx, imgs[i])
+			if err != nil {
+				log.Printf("ingest: doc=%s image %d VLM failed: %v", docID, i, err)
+				return
+			}
+			descs[i] = desc
+		}(i)
+	}
+	wg.Wait()
+	return descs
+}
+
+func (ing *Ingestor) describeOneImage(ctx context.Context, img parser.ParsedImage) (string, error) {
+	dataURL := "data:" + img.MIME + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+	return ing.Vision.Chat(ctx, []llm.Message{{
+		Role: llm.RoleUser,
+		Content: "请用简洁中文描述这张图片；若是图表/流程图/截图，说明其关键信息，" +
+			"控制在两三句以内。",
+		Images: []llm.ImageRef{{DataURL: dataURL}},
+	}})
+}

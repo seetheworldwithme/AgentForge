@@ -10,12 +10,12 @@ type Txt struct{}
 func (Txt) Supports(mime, fn string) bool {
 	return strings.HasPrefix(mime, "text/plain") || strings.HasSuffix(fn, ".txt") || mime == ""
 }
-func (Txt) Parse(r io.Reader) (string, error) {
+func (Txt) Parse(r io.Reader) (ParseResult, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return "", err
+		return ParseResult{}, err
 	}
-	return string(b), nil
+	return ParseResult{Text: string(b)}, nil
 }
 
 type Markdown struct{}
@@ -23,11 +23,11 @@ type Markdown struct{}
 func (Markdown) Supports(mime, fn string) bool {
 	return strings.HasSuffix(fn, ".md") || mime == "text/markdown"
 }
-func (Markdown) Parse(r io.Reader) (string, error) {
+func (Markdown) Parse(r io.Reader) (ParseResult, error) {
 	b, err := io.ReadAll(r)
 	if err != nil {
-		return "", err
+		return ParseResult{}, err
 	}
 	// MVP: return raw markdown; chunking handles size.
-	return string(b), nil
+	return ParseResult{Text: string(b)}, nil
 }

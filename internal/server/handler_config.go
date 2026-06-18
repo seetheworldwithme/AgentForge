@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/oklog/ulid/v2"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/store"
+	"github.com/go-chi/chi/v5"
+	"github.com/oklog/ulid/v2"
 )
 
 type ConfigHandler struct {
@@ -27,13 +27,14 @@ func (h *ConfigHandler) Routes(r chi.Router) {
 }
 
 type providerDTO struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	BaseURL    string `json:"base_url"`
-	APIKey     string `json:"api_key"`
-	ChatModel  string `json:"chat_model"`
-	EmbedModel string `json:"embed_model"`
-	IsDefault  bool   `json:"is_default"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key"`
+	ChatModel   string `json:"chat_model"`
+	EmbedModel  string `json:"embed_model"`
+	VisionModel string `json:"vision_model"`
+	IsDefault   bool   `json:"is_default"`
 	// Kind selects which endpoint /providers/test probes: "chat" (default)
 	// hits chat/completions; "embed" hits /embeddings. Other endpoints ignore it.
 	Kind string `json:"kind"`
@@ -62,7 +63,7 @@ func (h *ConfigHandler) createProvider(w http.ResponseWriter, r *http.Request) {
 	p := store.Provider{
 		ID: "prov_" + ulid.Make().String(), Name: dto.Name, BaseURL: dto.BaseURL,
 		APIKey: dto.APIKey, ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
-		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
+		VisionModel: dto.VisionModel, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := h.DB.CreateProvider(p); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -83,7 +84,7 @@ func (h *ConfigHandler) updateProvider(w http.ResponseWriter, r *http.Request) {
 	_ = h.DB.DeleteProvider(id)
 	p := store.Provider{
 		ID: id, Name: dto.Name, BaseURL: dto.BaseURL, APIKey: dto.APIKey,
-		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
+		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel, VisionModel: dto.VisionModel,
 		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := h.DB.CreateProvider(p); err != nil {
@@ -208,7 +209,8 @@ func (h *ConfigHandler) setTitleProvider(w http.ResponseWriter, r *http.Request)
 func toProviderDTO(p store.Provider) providerDTO {
 	return providerDTO{
 		ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKey: p.APIKey,
-		ChatModel: p.ChatModel, EmbedModel: p.EmbedModel, IsDefault: p.IsDefault,
+		ChatModel: p.ChatModel, EmbedModel: p.EmbedModel, VisionModel: p.VisionModel,
+		IsDefault: p.IsDefault,
 	}
 }
 

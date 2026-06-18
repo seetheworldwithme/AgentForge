@@ -11,6 +11,10 @@ type flakyClient struct {
 	fail  int // fail first N calls with this error
 }
 
+func (f *flakyClient) Chat(ctx context.Context, msgs []Message) (string, error) {
+	return "", nil
+}
+
 func (f *flakyClient) ChatStream(ctx context.Context, msgs []Message, tools []ToolSpec) (<-chan Chunk, error) {
 	f.calls++
 	if f.calls <= f.fail {

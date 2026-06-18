@@ -2,15 +2,16 @@
 PRAGMA user_version = 1;
 
 CREATE TABLE IF NOT EXISTS providers (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    base_url    TEXT NOT NULL,
-    api_key     TEXT NOT NULL,
-    chat_model  TEXT NOT NULL,
-    embed_model TEXT,
-    is_default  INTEGER DEFAULT 0,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    base_url     TEXT NOT NULL,
+    api_key      TEXT NOT NULL,
+    chat_model   TEXT NOT NULL,
+    embed_model  TEXT,
+    vision_model TEXT,
+    is_default   INTEGER DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS settings (

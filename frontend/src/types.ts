@@ -8,6 +8,7 @@ export interface Provider {
   api_key: string;
   chat_model: string;
   embed_model?: string;
+  vision_model?: string;
   is_default: boolean;
 }
 

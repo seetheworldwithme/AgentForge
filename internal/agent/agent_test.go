@@ -17,6 +17,10 @@ type fakeLLM struct {
 	calls   int
 }
 
+func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) {
+	return "", nil
+}
+
 func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.ToolSpec) (<-chan llm.Chunk, error) {
 	script := f.scripts[f.calls%len(f.scripts)]
 	f.calls++

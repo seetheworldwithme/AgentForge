@@ -17,6 +17,10 @@ import (
 
 type fakeEmbedClient struct{}
 
+func (fakeEmbedClient) Chat(context.Context, []llm.Message) (string, error) {
+	return "", nil
+}
+
 func (fakeEmbedClient) ChatStream(context.Context, []llm.Message, []llm.ToolSpec) (<-chan llm.Chunk, error) {
 	ch := make(chan llm.Chunk)
 	close(ch)
@@ -88,7 +92,7 @@ func TestKBWorkbenchEndpoints(t *testing.T) {
 	}, http.StatusOK)
 	if !strings.Contains(body, `"chunk_id":"chunk_1"`) ||
 		!strings.Contains(body, `"filename":"guide.md"`) ||
-		!strings.Contains(body, `"distance"`) {
+		!strings.Contains(body, `"similarity"`) {
 		t.Fatalf("retrieve body = %s", body)
 	}
 
