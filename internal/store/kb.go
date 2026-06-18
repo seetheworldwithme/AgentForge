@@ -5,6 +5,7 @@ type KnowledgeBase struct {
 	Name            string
 	Description     string
 	EmbedProviderID string
+	ChatProviderID  string
 	ChunkSize       int
 	ChunkOverlap    int
 	DocCount        int
@@ -36,40 +37,43 @@ type Chunk struct {
 
 func (d *DB) CreateKB(kb KnowledgeBase) error {
 	_, err := d.sql.Exec(`INSERT INTO knowledge_bases
-		(id,name,description,embed_provider_id,chunk_size,chunk_overlap,doc_count,created_at)
-		VALUES(?,?,?,?,?,?,?,?)`,
+		(id,name,description,embed_provider_id,chat_provider_id,chunk_size,chunk_overlap,doc_count,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`,
 		kb.ID, kb.Name, nullable(kb.Description), nullable(kb.EmbedProviderID),
-		kb.ChunkSize, kb.ChunkOverlap, kb.DocCount, kb.CreatedAt)
+		nullable(kb.ChatProviderID), kb.ChunkSize, kb.ChunkOverlap, kb.DocCount, kb.CreatedAt)
 	return err
 }
 
 func (d *DB) UpdateKB(kb KnowledgeBase) error {
 	_, err := d.sql.Exec(`UPDATE knowledge_bases
-		SET name=?, description=?, embed_provider_id=?, chunk_size=?, chunk_overlap=?
+		SET name=?, description=?, embed_provider_id=?, chat_provider_id=?, chunk_size=?, chunk_overlap=?
 		WHERE id=?`,
 		kb.Name, nullable(kb.Description), nullable(kb.EmbedProviderID),
-		kb.ChunkSize, kb.ChunkOverlap, kb.ID)
+		nullable(kb.ChatProviderID), kb.ChunkSize, kb.ChunkOverlap, kb.ID)
 	return err
 }
 
 func (d *DB) GetKB(id string) (KnowledgeBase, error) {
-	row := d.sql.QueryRow(`SELECT id,name,description,embed_provider_id,chunk_size,chunk_overlap,doc_count,created_at
+	row := d.sql.QueryRow(`SELECT id,name,description,embed_provider_id,chat_provider_id,chunk_size,chunk_overlap,doc_count,created_at
 		FROM knowledge_bases WHERE id=?`, id)
 	var kb KnowledgeBase
-	var desc, prov *string
-	err := row.Scan(&kb.ID, &kb.Name, &desc, &prov, &kb.ChunkSize, &kb.ChunkOverlap,
+	var desc, embedProv, chatProv *string
+	err := row.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &kb.ChunkSize, &kb.ChunkOverlap,
 		&kb.DocCount, &kb.CreatedAt)
 	if desc != nil {
 		kb.Description = *desc
 	}
-	if prov != nil {
-		kb.EmbedProviderID = *prov
+	if embedProv != nil {
+		kb.EmbedProviderID = *embedProv
+	}
+	if chatProv != nil {
+		kb.ChatProviderID = *chatProv
 	}
 	return kb, err
 }
 
 func (d *DB) ListKBs() ([]KnowledgeBase, error) {
-	rows, err := d.sql.Query(`SELECT id,name,description,embed_provider_id,chunk_size,chunk_overlap,doc_count,created_at
+	rows, err := d.sql.Query(`SELECT id,name,description,embed_provider_id,chat_provider_id,chunk_size,chunk_overlap,doc_count,created_at
 		FROM knowledge_bases ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -78,16 +82,19 @@ func (d *DB) ListKBs() ([]KnowledgeBase, error) {
 	var out []KnowledgeBase
 	for rows.Next() {
 		var kb KnowledgeBase
-		var desc, prov *string
-		if err := rows.Scan(&kb.ID, &kb.Name, &desc, &prov, &kb.ChunkSize, &kb.ChunkOverlap,
+		var desc, embedProv, chatProv *string
+		if err := rows.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &kb.ChunkSize, &kb.ChunkOverlap,
 			&kb.DocCount, &kb.CreatedAt); err != nil {
 			return nil, err
 		}
 		if desc != nil {
 			kb.Description = *desc
 		}
-		if prov != nil {
-			kb.EmbedProviderID = *prov
+		if embedProv != nil {
+			kb.EmbedProviderID = *embedProv
+		}
+		if chatProv != nil {
+			kb.ChatProviderID = *chatProv
 		}
 		out = append(out, kb)
 	}

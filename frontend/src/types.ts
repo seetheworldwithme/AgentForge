@@ -8,7 +8,6 @@ export interface Provider {
   api_key: string;
   chat_model: string;
   embed_model?: string;
-  vision_model?: string;
   is_default: boolean;
 }
 
@@ -38,6 +37,7 @@ export interface KnowledgeBase {
   name: string;
   description?: string;
   embed_provider_id: string;
+  chat_provider_id?: string;
   chunk_size: number;
   chunk_overlap: number;
   doc_count: number;

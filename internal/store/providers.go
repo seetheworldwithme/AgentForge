@@ -1,35 +1,34 @@
 package store
 
 type Provider struct {
-	ID          string
-	Name        string
-	BaseURL     string
-	APIKey      string
-	ChatModel   string
-	EmbedModel  string
-	VisionModel string
-	IsDefault   bool
-	CreatedAt   string
-	UpdatedAt   string
+	ID         string
+	Name       string
+	BaseURL    string
+	APIKey     string
+	ChatModel  string
+	EmbedModel string
+	IsDefault  bool
+	CreatedAt  string
+	UpdatedAt  string
 }
 
 func (d *DB) CreateProvider(p Provider) error {
 	_, err := d.sql.Exec(`INSERT INTO providers
-		(id,name,base_url,api_key,chat_model,embed_model,vision_model,is_default,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		(id,name,base_url,api_key,chat_model,embed_model,is_default,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.BaseURL, p.APIKey, p.ChatModel, nullable(p.EmbedModel),
-		nullable(p.VisionModel), boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
+		boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (d *DB) GetProvider(id string) (Provider, error) {
-	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,vision_model,is_default,created_at,updated_at
+	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,is_default,created_at,updated_at
 		FROM providers WHERE id=?`, id)
 	return scanProvider(row)
 }
 
 func (d *DB) ListProviders() ([]Provider, error) {
-	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,vision_model,is_default,created_at,updated_at
+	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,is_default,created_at,updated_at
 		FROM providers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -48,7 +47,7 @@ func (d *DB) ListProviders() ([]Provider, error) {
 
 // GetDefaultProvider returns the provider flagged is_default=1, if any.
 func (d *DB) GetDefaultProvider() (Provider, error) {
-	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,vision_model,is_default,created_at,updated_at
+	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,is_default,created_at,updated_at
 		FROM providers WHERE is_default=1 LIMIT 1`)
 	return scanProvider(row)
 }
@@ -69,6 +68,9 @@ func (d *DB) DeleteProvider(id string) error {
 	if _, err := tx.Exec(`UPDATE knowledge_bases SET embed_provider_id=NULL WHERE embed_provider_id=?`, id); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`UPDATE knowledge_bases SET chat_provider_id=NULL WHERE chat_provider_id=?`, id); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`DELETE FROM providers WHERE id=?`, id); err != nil {
 		return err
 	}
@@ -82,15 +84,11 @@ type scanner interface {
 func scanProvider(s scanner) (Provider, error) {
 	var p Provider
 	var embedModel *string
-	var visionModel *string
 	var isDefault int
 	err := s.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKey, &p.ChatModel,
-		&embedModel, &visionModel, &isDefault, &p.CreatedAt, &p.UpdatedAt)
+		&embedModel, &isDefault, &p.CreatedAt, &p.UpdatedAt)
 	if embedModel != nil {
 		p.EmbedModel = *embedModel
-	}
-	if visionModel != nil {
-		p.VisionModel = *visionModel
 	}
 	p.IsDefault = isDefault != 0
 	return p, err

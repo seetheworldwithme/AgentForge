@@ -50,6 +50,7 @@ type kbDTO struct {
 	Name          string `json:"name"`
 	Description   string `json:"description"`
 	EmbedProvider string `json:"embed_provider_id"`
+	ChatProvider  string `json:"chat_provider_id"`
 	ChunkSize     int    `json:"chunk_size"`
 	ChunkOverlap  int    `json:"chunk_overlap"`
 	DocCount      int    `json:"doc_count"`
@@ -98,7 +99,8 @@ func (h *KBHandler) list(w http.ResponseWriter, r *http.Request) {
 	for i, k := range kbs {
 		out[i] = kbDTO{
 			ID: k.ID, Name: k.Name, Description: k.Description,
-			EmbedProvider: k.EmbedProviderID, ChunkSize: k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
+			EmbedProvider: k.EmbedProviderID, ChatProvider: k.ChatProviderID,
+			ChunkSize: k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
 			DocCount: k.DocCount, CreatedAt: k.CreatedAt,
 		}
 	}
@@ -114,7 +116,8 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	kb := store.KnowledgeBase{
 		ID: "kb_" + ulid.Make().String(), Name: dto.Name, Description: dto.Description,
-		EmbedProviderID: dto.EmbedProvider, ChunkSize: dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
+		EmbedProviderID: dto.EmbedProvider, ChatProviderID: dto.ChatProvider,
+		ChunkSize: dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
 		CreatedAt: now,
 	}
 	if err := h.DB.CreateKB(kb); err != nil {
@@ -123,7 +126,8 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, kbDTO{
 		ID: kb.ID, Name: kb.Name, Description: kb.Description,
-		EmbedProvider: kb.EmbedProviderID, ChunkSize: kb.ChunkSize, ChunkOverlap: kb.ChunkOverlap,
+		EmbedProvider: kb.EmbedProviderID, ChatProvider: kb.ChatProviderID,
+		ChunkSize: kb.ChunkSize, ChunkOverlap: kb.ChunkOverlap,
 		DocCount: kb.DocCount, CreatedAt: kb.CreatedAt,
 	})
 }
@@ -147,6 +151,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 	current.Name = dto.Name
 	current.Description = dto.Description
 	current.EmbedProviderID = dto.EmbedProvider
+	current.ChatProviderID = dto.ChatProvider
 	current.ChunkSize = dto.ChunkSize
 	current.ChunkOverlap = dto.ChunkOverlap
 	if err := h.DB.UpdateKB(current); err != nil {
@@ -156,9 +161,9 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 	updated, _ := h.DB.GetKB(id)
 	writeJSON(w, http.StatusOK, kbDTO{
 		ID: updated.ID, Name: updated.Name, Description: updated.Description,
-		EmbedProvider: updated.EmbedProviderID, ChunkSize: updated.ChunkSize,
-		ChunkOverlap: updated.ChunkOverlap, DocCount: updated.DocCount,
-		CreatedAt: updated.CreatedAt,
+		EmbedProvider: updated.EmbedProviderID, ChatProvider: updated.ChatProviderID,
+		ChunkSize: updated.ChunkSize, ChunkOverlap: updated.ChunkOverlap,
+		DocCount: updated.DocCount, CreatedAt: updated.CreatedAt,
 	})
 }
 
@@ -397,13 +402,13 @@ func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) llm.LLMClient {
 	return h.EmbedClient
 }
 
-// visionClientForKB 返回 KB 绑定 provider 的 vision 模型客户端（用于把文档
-// 图片描述成文字）；没配 vision_model 时返回 nil（图片跳过）。
+// visionClientForKB 返回 KB 绑定的 chat（含 VL）模型客户端，用于把文档图片
+// 描述成文字（VLM）。没配 chat_provider 时返回 nil（图片跳过）。
 func (h *KBHandler) visionClientForKB(kb store.KnowledgeBase) llm.LLMClient {
-	if kb.EmbedProviderID != "" {
-		if p, err := h.DB.GetProvider(kb.EmbedProviderID); err == nil && p.VisionModel != "" {
+	if kb.ChatProviderID != "" {
+		if p, err := h.DB.GetProvider(kb.ChatProviderID); err == nil && p.ChatModel != "" {
 			return llm.NewOpenAIClient(llm.Config{
-				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.VisionModel,
+				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
 			})
 		}
 	}

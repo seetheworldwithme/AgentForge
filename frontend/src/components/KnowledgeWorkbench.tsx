@@ -32,6 +32,7 @@ export function KnowledgeWorkbench() {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [providerId, setProviderId] = useState('');
+  const [chatProviderId, setChatProviderId] = useState('');
   const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE);
   const [overlap, setOverlap] = useState(DEFAULT_OVERLAP);
   const [search, setSearch] = useState('');
@@ -65,6 +66,7 @@ export function KnowledgeWorkbench() {
     setName(active.name);
     setDescription(active.description ?? '');
     setProviderId(active.embed_provider_id ?? '');
+    setChatProviderId(active.chat_provider_id ?? '');
     setChunkSize(active.chunk_size || DEFAULT_CHUNK_SIZE);
     setOverlap(active.chunk_overlap || DEFAULT_OVERLAP);
   }, [active?.id]);
@@ -82,6 +84,7 @@ export function KnowledgeWorkbench() {
     (name !== active.name ||
       description !== (active.description ?? '') ||
       providerId !== (active.embed_provider_id ?? '') ||
+      chatProviderId !== (active.chat_provider_id ?? '') ||
       chunkSize !== (active.chunk_size || DEFAULT_CHUNK_SIZE) ||
       overlap !== (active.chunk_overlap || DEFAULT_OVERLAP));
 
@@ -102,6 +105,7 @@ export function KnowledgeWorkbench() {
       name: name.trim(),
       description,
       embed_provider_id: providerId,
+      chat_provider_id: chatProviderId,
       chunk_size: chunkSize,
       chunk_overlap: overlap,
     });
@@ -282,10 +286,18 @@ export function KnowledgeWorkbench() {
                     placeholder="描述"
                   />
                   <select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-                    <option value="">未选择 Embedding Provider</option>
+                    <option value="">未选择 Embedding 模型</option>
                     {providers.map((p) => (
                       <option key={p.id} value={p.id}>
                         {p.name} · {p.embed_model || '未配置 embed model'}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="field" value={chatProviderId} onChange={(e) => setChatProviderId(e.target.value)}>
+                    <option value="">未选择 Chat/VL 模型（图片描述用，可选）</option>
+                    {providers.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} · {p.chat_model || '未配置 chat model'}
                       </option>
                     ))}
                   </select>
