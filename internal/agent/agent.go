@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"log"
 	"strconv"
 	"strings"
 
@@ -73,9 +74,14 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			query := lastUserText(history)
 			chunks, err := a.deps.RAG.Retrieve(ctx, in.KBID, query, 5)
 			if err == nil {
-				chunks = filterRAGChunks(chunks, ragSimilarityThreshold)
-				if len(chunks) > 0 {
-					history = prependRAGContext(history, chunks)
+				kept := filterRAGChunks(chunks, ragSimilarityThreshold)
+				// log the retrieval once per turn (query is stable across tool
+				// iterations) so the RAG pipeline can be debugged/tuned.
+				if iter == 0 {
+					logRAGRetrieval(query, chunks, kept, ragSimilarityThreshold)
+				}
+				if len(kept) > 0 {
+					history = prependRAGContext(history, kept)
 				}
 			}
 		}
@@ -164,6 +170,38 @@ func filterRAGChunks(chunks []RetrievedChunk, threshold float32) []RetrievedChun
 		}
 	}
 	return kept
+}
+
+// logRAGRetrieval prints the retrieval pipeline for debugging: every candidate
+// with its similarity and INJECT/DROP verdict. Injected chunks are printed in
+// full (that is exactly what the model sees in the prompt); dropped ones get a
+// short preview, enough to judge why they missed and to tune the threshold.
+func logRAGRetrieval(query string, retrieved, kept []RetrievedChunk, threshold float32) {
+	log.Printf("[RAG] query=%q threshold=%.2f candidates=%d injected=%d",
+		query, threshold, len(retrieved), len(kept))
+	keptSet := make(map[string]bool, len(kept))
+	for _, c := range kept {
+		keptSet[c.ID] = true
+	}
+	for i, c := range retrieved {
+		flag := "DROP"
+		text := c.Text
+		if keptSet[c.ID] {
+			flag = "INJECT"
+		} else {
+			text = truncate(strings.TrimSpace(c.Text), 100)
+		}
+		log.Printf("[RAG] #%d [%s] sim=%.3f %s\n%s", i+1, flag, c.Similarity, c.Filename, text)
+	}
+}
+
+// truncate clips s to at most n runes (unicode-safe) with an ellipsis.
+func truncate(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func prependRAGContext(history []llm.Message, chunks []RetrievedChunk) []llm.Message {

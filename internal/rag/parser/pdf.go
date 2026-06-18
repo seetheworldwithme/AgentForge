@@ -1,10 +1,12 @@
 package parser
 
 import (
+	"bytes"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
+
+	"github.com/ledongthuc/pdf"
 )
 
 type PDF struct{}
@@ -13,36 +15,29 @@ func (PDF) Supports(mime, fn string) bool {
 	return mime == "application/pdf" || strings.HasSuffix(strings.ToLower(fn), ".pdf")
 }
 
+// Parse 提取 PDF 全文。ledongthuc/pdf 会按页解析内容流、用字体的
+// ToUnicode(CMap) 解码文字，因此支持中文/CID 字体。对扫描型 PDF（纯图片、
+// 无文字层）仍提不出文本——那种需要 OCR，不在此处理。
 func (PDF) Parse(r io.Reader) (string, error) {
+	// ledongthuc/pdf 需要 io.ReaderAt，所以先把整个流读进内存。
 	b, err := io.ReadAll(r)
 	if err != nil {
 		return "", err
 	}
-	text := extractPDFLiteralText(string(b))
-	if strings.TrimSpace(text) == "" {
-		return "", fmt.Errorf("no extractable PDF text found")
+	reader, err := pdf.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		return "", fmt.Errorf("open pdf: %w", err)
 	}
-	return text, nil
-}
-
-func extractPDFLiteralText(raw string) string {
-	re := regexp.MustCompile(`\((?:\\.|[^\\)])*\)`)
-	matches := re.FindAllString(raw, -1)
-	if len(matches) == 0 {
-		return ""
+	textReader, err := reader.GetPlainText()
+	if err != nil {
+		return "", fmt.Errorf("extract pdf text: %w", err)
 	}
-	parts := make([]string, 0, len(matches))
-	for _, m := range matches {
-		s := strings.TrimSuffix(strings.TrimPrefix(m, "("), ")")
-		s = strings.ReplaceAll(s, `\(`, "(")
-		s = strings.ReplaceAll(s, `\)`, ")")
-		s = strings.ReplaceAll(s, `\\`, `\`)
-		s = strings.ReplaceAll(s, `\n`, "\n")
-		s = strings.ReplaceAll(s, `\r`, "\n")
-		s = strings.ReplaceAll(s, `\t`, "\t")
-		if strings.TrimSpace(s) != "" {
-			parts = append(parts, s)
-		}
+	text, err := io.ReadAll(textReader)
+	if err != nil {
+		return "", fmt.Errorf("read pdf text: %w", err)
 	}
-	return strings.Join(parts, "\n")
+	if strings.TrimSpace(string(text)) == "" {
+		return "", fmt.Errorf("no extractable PDF text found (scanned PDFs need OCR)")
+	}
+	return string(text), nil
 }

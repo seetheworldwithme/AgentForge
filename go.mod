@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mattn/go-sqlite3 v1.14.45
 	github.com/oklog/ulid/v2 v2.1.1
 	github.com/wailsapp/wails/v2 v2.12.0
