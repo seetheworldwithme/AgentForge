@@ -125,7 +125,7 @@ func (ing *Ingestor) fillImagePlaceholders(ctx context.Context, docID string, re
 	descs := ing.describeImages(ctx, docID, res.Images)
 	return parser.ReplacePlaceholders(res.Text, func(i int) string {
 		if i < len(descs) && descs[i] != "" {
-			return "[图片：" + descs[i] + "]"
+			return "\n[图片内容]\n" + descs[i] + "\n"
 		}
 		return ""
 	})
@@ -163,10 +163,16 @@ func (ing *Ingestor) describeImages(ctx context.Context, docID string, imgs []pa
 
 func (ing *Ingestor) describeOneImage(ctx context.Context, img parser.ParsedImage) (string, error) {
 	dataURL := "data:" + img.MIME + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+	// 让 VLM 转录图片里的全部文字内容（而非概括），这样代码/配置/表格等
+	// 细节能进 RAG 被检索到；只有纯示意图才做简要说明。
+	prompt := "请提取这张图片的全部内容，用于知识库检索：\n" +
+		"1. 图片里的所有文字（标题、正文、列表、代码、配置、命令、表格等）逐字完整转录，" +
+		"保持原文顺序与结构，代码用 ``` 代码块、表格用 Markdown 表格，不要概括或改写；\n" +
+		"2. 若图片是流程图/示意图/照片、文字很少，则简要说明其关键信息（节点、流程、关系、场景）；\n" +
+		"3. 只输出内容本身，不要加任何前言或解释。"
 	return ing.Vision.Chat(ctx, []llm.Message{{
-		Role: llm.RoleUser,
-		Content: "请用简洁中文描述这张图片；若是图表/流程图/截图，说明其关键信息，" +
-			"控制在两三句以内。",
-		Images: []llm.ImageRef{{DataURL: dataURL}},
+		Role:    llm.RoleUser,
+		Content: prompt,
+		Images:  []llm.ImageRef{{DataURL: dataURL}},
 	}})
 }
