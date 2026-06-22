@@ -48,15 +48,29 @@ func TestMCPSettingsEndpoints(t *testing.T) {
 	}
 	defer db.Close()
 
-	manager := mcp.NewManager(db)
+	manager := mcp.NewManagerWithPath(db, filepath.Join(t.TempDir(), ".agent", "mcp.json"))
 	router := NewRouter(Deps{DB: db, MCP: manager})
 
 	requestJSON(t, router, http.MethodPut, "/api/mcp/servers", []mcp.ServerConfig{{
-		ID: "srv_demo", Name: "Demo", Command: "demo", Args: []string{"--stdio"}, Enabled: true,
+		ID: "srv_demo", Name: "Demo", Command: "demo", Args: []string{"--stdio"}, Enabled: false,
 	}})
 	body := requestJSON(t, router, http.MethodGet, "/api/mcp/servers", nil)
 	if !strings.Contains(body, `"id":"srv_demo"`) || !strings.Contains(body, `"command":"demo"`) {
 		t.Fatalf("expected persisted MCP server, got %s", body)
+	}
+
+	requestJSON(t, router, http.MethodPut, "/api/mcp/config", map[string]any{
+		"mcpServers": map[string]any{
+			"remote": map[string]any{
+				"url":     "http://localhost:3000/mcp",
+				"headers": map[string]string{"Authorization": "Bearer token"},
+				"enabled": false,
+			},
+		},
+	})
+	body = requestJSON(t, router, http.MethodGet, "/api/mcp/config", nil)
+	if !strings.Contains(body, `"remote"`) || !strings.Contains(body, `"transport": "sse"`) {
+		t.Fatalf("expected mcp config json, got %s", body)
 	}
 }
 

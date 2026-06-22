@@ -89,9 +89,12 @@ export interface Skill {
 export interface MCPServer {
   id: string;
   name: string;
+  transport: 'stdio' | 'sse' | string;
   command: string;
   args: string[];
   env: Record<string, string>;
+  url: string;
+  headers: Record<string, string>;
   enabled: boolean;
 }
 

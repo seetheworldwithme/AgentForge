@@ -32,6 +32,10 @@ func NewRouter(d Deps) http.Handler {
 	if d.Skills != nil {
 		skillProvider = d.Skills
 	}
+	mcpConfigPath := ""
+	if d.MCP != nil {
+		mcpConfigPath = d.MCP.ConfigPath()
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger, middleware.Recoverer)
@@ -49,7 +53,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		(&ConfigHandler{DB: d.DB}).Routes(r)
 		(&SessionHandler{DB: d.DB, WorkDir: d.WorkDir}).Routes(r)
-		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, RAG: d.RAG, Skills: skillProvider}).Routes(r)
+		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath}).Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)

@@ -3,6 +3,9 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -13,11 +16,23 @@ import (
 const serversSettingKey = "mcp.servers"
 
 type Manager struct {
-	db *store.DB
+	db         *store.DB
+	configPath string
 }
 
 func NewManager(db *store.DB) *Manager {
-	return &Manager{db: db}
+	return NewManagerWithPath(db, defaultConfigPath())
+}
+
+func NewManagerWithPath(db *store.DB, configPath string) *Manager {
+	return &Manager{db: db, configPath: configPath}
+}
+
+func (m *Manager) ConfigPath() string {
+	if m == nil {
+		return ""
+	}
+	return m.configPath
 }
 
 func AttachToEngine(base *tools.Engine, manager *Manager) *tools.Engine {
@@ -40,6 +55,15 @@ func (m *Manager) ListServers() ([]ServerConfig, error) {
 	if m == nil || m.db == nil {
 		return nil, nil
 	}
+	if m.configPath != "" {
+		raw, err := os.ReadFile(m.configPath)
+		if err == nil && strings.TrimSpace(string(raw)) != "" {
+			return ParseConfigJSON(raw)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	raw, err := m.db.GetSetting(serversSettingKey)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return []ServerConfig{}, nil
@@ -48,15 +72,72 @@ func (m *Manager) ListServers() ([]ServerConfig, error) {
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return normalizeServers(out), nil
 }
 
 func (m *Manager) SaveServers(servers []ServerConfig) error {
+	servers = normalizeServers(servers)
+	if err := m.ValidateServers(servers); err != nil {
+		return err
+	}
+	return m.writeServers(servers)
+}
+
+func (m *Manager) SaveConfigJSON(raw []byte) ([]byte, error) {
+	servers, err := ParseConfigJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.ValidateServers(servers); err != nil {
+		return nil, err
+	}
+	if err := m.writeServers(servers); err != nil {
+		return nil, err
+	}
+	return FormatConfigJSON(servers)
+}
+
+func (m *Manager) ConfigJSON() ([]byte, error) {
+	servers, err := m.ListServers()
+	if err != nil {
+		return nil, err
+	}
+	return FormatConfigJSON(servers)
+}
+
+func (m *Manager) ValidateServers(servers []ServerConfig) error {
+	for _, server := range normalizeServers(servers) {
+		if !server.Enabled {
+			continue
+		}
+		if _, err := NewClient(server).ListTools(); err != nil {
+			return fmt.Errorf("MCP %s unavailable: %w", server.Name, err)
+		}
+	}
+	return nil
+}
+
+func (m *Manager) writeServers(servers []ServerConfig) error {
 	b, err := json.Marshal(servers)
 	if err != nil {
 		return err
 	}
-	return m.db.SetSetting(serversSettingKey, string(b))
+	if m.configPath != "" {
+		if err := os.MkdirAll(filepath.Dir(m.configPath), 0o755); err != nil {
+			return err
+		}
+		raw, err := FormatConfigJSON(servers)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(m.configPath, raw, 0o644); err != nil {
+			return err
+		}
+	}
+	if m.db != nil {
+		return m.db.SetSetting(serversSettingKey, string(b))
+	}
+	return nil
 }
 
 func (m *Manager) ToolSpecs() []tools.Spec {
@@ -69,7 +150,8 @@ func (m *Manager) ToolSpecs() []tools.Spec {
 		if !server.Enabled {
 			continue
 		}
-		remoteTools, err := NewStdioClient(server).ListTools()
+		client := NewClient(server)
+		remoteTools, err := client.ListTools()
 		if err != nil {
 			continue
 		}
@@ -83,6 +165,14 @@ func (m *Manager) ToolSpecs() []tools.Spec {
 		}
 	}
 	return out
+}
+
+func defaultConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return filepath.Join(".agent", "mcp.json")
+	}
+	return filepath.Join(home, ".agent", "mcp.json")
 }
 
 func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result, error) {
@@ -100,7 +190,8 @@ func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result,
 		if !server.Enabled {
 			continue
 		}
-		remoteTools, err := NewStdioClient(server).ListTools()
+		client := NewClient(server)
+		remoteTools, err := client.ListTools()
 		if err != nil {
 			continue
 		}
@@ -108,7 +199,7 @@ func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result,
 			if toolName(server, remote.Name) != name {
 				continue
 			}
-			text, err := NewStdioClient(server).CallTool(remote.Name, parsed)
+			text, err := client.CallTool(remote.Name, parsed)
 			if err != nil {
 				return tools.Result{Content: err.Error(), IsError: true}, nil
 			}

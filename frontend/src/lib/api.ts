@@ -16,7 +16,7 @@ import type {
 async function jget<T = any>(path: string): Promise<T> {
   const b = await baseUrl();
   const r = await fetch(`${b}${path}`);
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(path, r));
   return r.json() as Promise<T>;
 }
 async function jpost<T = any>(path: string, body: any): Promise<T> {
@@ -25,13 +25,13 @@ async function jpost<T = any>(path: string, body: any): Promise<T> {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(path, r));
   return r.json() as Promise<T>;
 }
 async function jdel(path: string): Promise<void> {
   const b = await baseUrl();
   const r = await fetch(`${b}${path}`, { method: 'DELETE' });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(path, r));
 }
 async function jput<T = any>(path: string, body: any): Promise<T> {
   const b = await baseUrl();
@@ -39,8 +39,19 @@ async function jput<T = any>(path: string, body: any): Promise<T> {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(`${path} ${r.status}`);
+  if (!r.ok) throw new Error(await responseError(path, r));
   return r.json() as Promise<T>;
+}
+
+async function responseError(path: string, r: Response): Promise<string> {
+  try {
+    const body = await r.json();
+    const msg = body?.error?.message ?? body?.message;
+    if (msg) return msg;
+  } catch {
+    /* fall back to status */
+  }
+  return `${path} ${r.status}`;
 }
 
 export const api = {
@@ -121,4 +132,7 @@ export const api = {
   // --- MCP ---
   listMCPServers: () => jget<MCPServer[]>('/api/mcp/servers'),
   saveMCPServers: (servers: MCPServer[]) => jput<MCPServer[]>('/api/mcp/servers', servers),
+  getMCPConfig: () => jget<Record<string, any>>('/api/mcp/config'),
+  saveMCPConfig: (config: Record<string, any>) => jput<Record<string, any>>('/api/mcp/config', config),
+  getMCPConfigPath: () => jget<{ path: string }>('/api/mcp/config-path'),
 };

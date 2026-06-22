@@ -19,11 +19,12 @@ import (
 )
 
 type ChatHandler struct {
-	DB     *store.DB
-	Gate   *tools.Gate // wires tool confirmations onto this chat's SSE stream
-	Engine *tools.Engine
-	RAG    agent.RAGRetriever  // optional; nil disables RAG
-	Skills agent.SkillProvider // optional; nil disables skills
+	DB            *store.DB
+	Gate          *tools.Gate // wires tool confirmations onto this chat's SSE stream
+	Engine        *tools.Engine
+	RAG           agent.RAGRetriever  // optional; nil disables RAG
+	Skills        agent.SkillProvider // optional; nil disables skills
+	MCPConfigPath string
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -105,6 +106,9 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	for _, m := range storedMsgs {
 		history = append(history, storeMsgToLLM(m))
 	}
+	if h.MCPConfigPath != "" {
+		history = prependSystemMessage(history, "MCP server configuration is stored at "+h.MCPConfigPath+". When the user asks which MCP servers are configured, read that file directly instead of searching the filesystem.")
+	}
 
 	// persist user message
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -172,6 +176,16 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// Wait for the concurrent title generation to settle (LLM or fallback)
 	// before the stream closes, so the client always receives a title event.
 	titleWg.Wait()
+}
+
+func prependSystemMessage(history []llm.Message, content string) []llm.Message {
+	system := llm.Message{Role: llm.RoleSystem, Content: content}
+	if len(history) > 0 && history[0].Role == llm.RoleSystem {
+		out := append([]llm.Message(nil), history...)
+		out[0] = llm.Message{Role: llm.RoleSystem, Content: content + "\n" + history[0].Content}
+		return out
+	}
+	return append([]llm.Message{system}, history...)
 }
 
 // titleClient returns the provider dedicated to title generation, falling back
