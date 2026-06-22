@@ -13,8 +13,9 @@ import (
 
 // fakeLLM scripts a sequence of streamed responses (one per turn).
 type fakeLLM struct {
-	scripts [][]llm.Chunk
-	calls   int
+	scripts      [][]llm.Chunk
+	calls        int
+	lastMessages []llm.Message
 }
 
 func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) {
@@ -22,6 +23,7 @@ func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) 
 }
 
 func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.ToolSpec) (<-chan llm.Chunk, error) {
+	f.lastMessages = append([]llm.Message(nil), msgs...)
 	script := f.scripts[f.calls%len(f.scripts)]
 	f.calls++
 	ch := make(chan llm.Chunk, len(script))
@@ -35,6 +37,10 @@ func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.T
 func (f *fakeLLM) Embed(ctx context.Context, in []string) ([][]float32, error) {
 	return nil, nil
 }
+
+type staticSkills string
+
+func (s staticSkills) EnabledInstructions() (string, error) { return string(s), nil }
 
 // fakeToolEngine just echoes the tool name as the result.
 type fakeToolEngine struct{}
@@ -68,6 +74,33 @@ func TestRunPlainTextThenDone(t *testing.T) {
 	})
 	if len(rec.events) == 0 || rec.events[len(rec.events)-1] != "done" {
 		t.Errorf("expected done event, got %v", rec.events)
+	}
+}
+
+func TestRunInjectsEnabledSkillsIntoSystemPrompt(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{Text: "ok"}, {Done: true}},
+	}}
+	a := New(Deps{
+		LLM:     m,
+		Skills:  staticSkills("Use the frontend-design skill before changing UI."),
+		MaxIter: 5,
+	})
+
+	a.Run(context.Background(), RunInput{
+		History:     []llm.Message{{Role: llm.RoleUser, Content: "hi"}},
+		Emit:        &recorderEmitter{},
+		UserMessage: "change settings",
+	})
+
+	if len(m.lastMessages) == 0 {
+		t.Fatal("no messages sent to LLM")
+	}
+	if m.lastMessages[0].Role != llm.RoleSystem {
+		t.Fatalf("first message role = %q", m.lastMessages[0].Role)
+	}
+	if !contains(m.lastMessages[0].Content, "frontend-design") {
+		t.Fatalf("system prompt missing skill instructions: %q", m.lastMessages[0].Content)
 	}
 }
 

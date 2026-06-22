@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { ProviderSettings } from './ProviderSettings';
 import { Icon, type IconName } from './Icon';
+import { MCPSettings } from './MCPSettings';
+import { SkillsSettings } from './SkillsSettings';
 
 type TabKey = 'model' | 'mcp' | 'skills';
 
@@ -9,19 +11,6 @@ const TABS: { key: TabKey; label: string; desc: string; icon: IconName }[] = [
   { key: 'mcp', label: 'MCP', desc: 'Model Context Protocol 服务器', icon: 'terminal' },
   { key: 'skills', label: 'Skills', desc: '技能管理', icon: 'sparkles' },
 ];
-
-function Placeholder({ title, desc }: { title: string; desc: string }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center py-16 text-center text-muted-foreground">
-      <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-muted text-muted-foreground">
-        <Icon name="sparkles" size={26} />
-      </div>
-      <div className="text-base font-semibold text-foreground">{title}</div>
-      <p className="mt-1 text-sm">{desc}</p>
-      <p className="mt-1 text-xs">（即将支持）</p>
-    </div>
-  );
-}
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState<TabKey>('model');
@@ -93,8 +82,8 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
           </div>
           <div className="flex-1 overflow-y-auto p-5">
             {tab === 'model' && <ProviderSettings />}
-            {tab === 'mcp' && <Placeholder title="MCP" desc="在此管理 MCP 服务器连接" />}
-            {tab === 'skills' && <Placeholder title="Skills" desc="在此管理可用技能" />}
+            {tab === 'mcp' && <MCPSettings />}
+            {tab === 'skills' && <SkillsSettings />}
           </div>
         </div>
       </div>

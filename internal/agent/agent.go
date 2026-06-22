@@ -56,6 +56,13 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 	if in.UserMessage != "" {
 		history = append(history, llm.Message{Role: llm.RoleUser, Content: in.UserMessage})
 	}
+	if a.deps.Skills != nil {
+		if instructions, err := a.deps.Skills.EnabledInstructions(); err == nil && strings.TrimSpace(instructions) != "" {
+			history = prependSystemContext(history, instructions)
+		} else if err != nil {
+			log.Printf("[Skills] load failed: %v", err)
+		}
+	}
 
 	var toolSpecs []llm.ToolSpec
 	if in.ToolsEnabled && a.deps.Tools != nil {
@@ -219,10 +226,18 @@ func prependRAGContext(history []llm.Message, chunks []RetrievedChunk) []llm.Mes
 		sb.WriteString("\n\n")
 	}
 	system := llm.Message{Role: llm.RoleSystem, Content: sb.String()}
+	return prependSystemMessage(history, system)
+}
+
+func prependSystemContext(history []llm.Message, content string) []llm.Message {
+	return prependSystemMessage(history, llm.Message{Role: llm.RoleSystem, Content: content})
+}
+
+func prependSystemMessage(history []llm.Message, system llm.Message) []llm.Message {
 	// merge with existing system message if present, else prepend
 	if len(history) > 0 && history[0].Role == llm.RoleSystem {
 		merged := history[0]
-		merged.Content = sb.String() + "\n" + history[0].Content
+		merged.Content = system.Content + "\n" + history[0].Content
 		out := make([]llm.Message, len(history))
 		copy(out, history)
 		out[0] = merged

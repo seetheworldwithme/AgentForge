@@ -17,6 +17,10 @@ type RAGRetriever interface {
 	Retrieve(ctx context.Context, kbID, query string, k int) ([]RetrievedChunk, error)
 }
 
+type SkillProvider interface {
+	EnabledInstructions() (string, error)
+}
+
 type RetrievedChunk struct {
 	ID         string
 	Text       string
@@ -29,6 +33,7 @@ type RetrievedChunk struct {
 type Deps struct {
 	LLM     llm.LLMClient
 	Tools   *tools.Engine
-	RAG     RAGRetriever // may be nil when RAG is off
-	MaxIter int          // safety cap, default 20
+	RAG     RAGRetriever  // may be nil when RAG is off
+	Skills  SkillProvider // may be nil when skills are off
+	MaxIter int           // safety cap, default 20
 }

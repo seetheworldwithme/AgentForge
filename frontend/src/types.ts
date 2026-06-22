@@ -77,6 +77,24 @@ export interface RetrieveHit {
   similarity: number;
 }
 
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  source: 'global' | 'project' | 'workspace' | string;
+  path: string;
+  enabled: boolean;
+}
+
+export interface MCPServer {
+  id: string;
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
+}
+
 // Chat SSE event names emitted by the agent loop (internal/agent/agent.go).
 export type ChatEventName =
   | 'started'

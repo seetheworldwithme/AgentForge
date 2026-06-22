@@ -10,19 +10,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/oklog/ulid/v2"
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
+	"github.com/go-chi/chi/v5"
+	"github.com/oklog/ulid/v2"
 )
 
 type ChatHandler struct {
 	DB     *store.DB
 	Gate   *tools.Gate // wires tool confirmations onto this chat's SSE stream
 	Engine *tools.Engine
-	RAG    agent.RAGRetriever // optional; nil disables RAG
+	RAG    agent.RAGRetriever  // optional; nil disables RAG
+	Skills agent.SkillProvider // optional; nil disables skills
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -126,7 +127,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a := agent.New(agent.Deps{
-		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, MaxIter: 20,
+		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, Skills: h.Skills, MaxIter: 20,
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()

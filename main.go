@@ -24,8 +24,10 @@ import (
 
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
+	"github.com/agent-rust/core/internal/mcp"
 	"github.com/agent-rust/core/internal/rag"
 	"github.com/agent-rust/core/internal/server"
+	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
 	"github.com/agent-rust/core/internal/tools/builtin"
@@ -53,7 +55,9 @@ func main() {
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
 		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
 	)
-	engine := tools.NewEngine(registry, gate)
+	mcpManager := mcp.NewManager(db)
+	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
+	engine := mcp.AttachToEngine(tools.NewEngine(registry, gate), mcpManager)
 
 	// Build an embed client + RAG retriever from the default provider, if any.
 	// These enable KB ingest and chat-time RAG; absent a configured provider
@@ -69,7 +73,7 @@ func main() {
 
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: engine,
-		EmbedClient: embedClient, RAG: ragRetriever, WorkDir: workDir,
+		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 

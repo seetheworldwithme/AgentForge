@@ -7,6 +7,8 @@ import type {
   Document,
   ChunkPreview,
   RetrieveHit,
+  Skill,
+  MCPServer,
 } from '../types';
 
 // All network I/O lives here. Components/stores never call fetch directly.
@@ -110,4 +112,13 @@ export const api = {
   // --- working directory ---
   getWorkDir: () => jget<{ workdir: string }>('/api/workdir'),
   setWorkDir: (dir: string) => jput<{ workdir: string }>('/api/workdir', { workdir: dir }),
+
+  // --- skills ---
+  listSkills: () => jget<Skill[]>('/api/skills'),
+  setSkillEnabled: (id: string, enabled: boolean) =>
+    jput<{ id: string; enabled: boolean }>(`/api/skills/${encodeURIComponent(id)}`, { enabled }),
+
+  // --- MCP ---
+  listMCPServers: () => jget<MCPServer[]>('/api/mcp/servers'),
+  saveMCPServers: (servers: MCPServer[]) => jput<MCPServer[]>('/api/mcp/servers', servers),
 };
