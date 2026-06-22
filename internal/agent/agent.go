@@ -17,6 +17,22 @@ import (
 // its own knowledge) instead of polluting the prompt with low-quality excerpts.
 const ragSimilarityThreshold float32 = 0.3
 
+// baseSystemPrompt 建立工具路由策略：明确告诉模型何时必须使用 MCP 工具。
+// 没有它时，模型对图像理解、联网搜索等超出语言模型直接能力的请求，会默认
+// 用 bash 等内置工具去绕，或干脆回答"我做不到"——即使对应的 mcp__ 工具
+// 已经可用。这里把"先判断任务类型、超出自身能力就用 MCP"作为硬性规则注入。
+const baseSystemPrompt = `你是一个配备了工具集的 AI 助手。你的工具分为两类：
+
+1. 内置工具（bash、file_read、file_write、file_edit、grep）：用于在用户工作目录中执行命令、读写文件与检索内容。
+2. MCP 扩展工具（工具名以 mcp__ 开头，形如 mcp__<服务>__<能力>）：这些是你自身语言模型能力之外的扩展能力，例如图像/视觉理解、联网搜索、网页阅读、链接深度阅读等。
+
+工具使用原则（务必遵守）：
+- 先判断任务类型，再选工具：文件与命令操作用内置工具；任何超出语言模型直接能力的请求，都必须调用对应的 MCP 工具来完成。
+- 当用户要求识别或理解图片、搜索互联网上的最新信息、读取某个网页、深度阅读某个链接时，必须优先调用对应的 mcp__ 工具，不得用 bash 等内置工具变通，也不得直接回答“我无法做到 / 我没有这个能力”。
+- 仅当确实没有任何合适的 MCP 工具可用时，才如实告知用户当前缺少哪一类能力。
+
+记住：永远不要因为“我没有这个能力”就放弃——先检查可用的 mcp__ 工具，它们正是为你补充这些能力而存在的。`
+
 type Agent struct {
 	deps Deps
 }
@@ -63,6 +79,11 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			log.Printf("[Skills] load failed: %v", err)
 		}
 	}
+
+	// 注入 base 系统提示词：建立工具路由策略，让模型在遇到图像理解、
+	// 联网搜索等超出自身能力的请求时主动调用 mcp__ 工具，而非用 bash 绕过。
+	// 在 skills 之后 prepend，使其排在最终 system 内容最前（最高优先级）。
+	history = prependSystemContext(history, baseSystemPrompt)
 
 	var toolSpecs []llm.ToolSpec
 	if in.ToolsEnabled && a.deps.Tools != nil {

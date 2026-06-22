@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,6 +154,9 @@ func (m *Manager) ToolSpecs() []tools.Spec {
 		client := NewClient(server)
 		remoteTools, err := client.ListTools()
 		if err != nil {
+			// 暴露加载失败：否则某个 MCP 没起来时，模型和用户都无从知晓
+			// 它的工具为何不可用（识图 MCP 没拉起就会导致"不调用"的假象）。
+			log.Printf("[MCP] server %q tools/list failed: %v", server.Name, err)
 			continue
 		}
 		for _, remote := range remoteTools {
