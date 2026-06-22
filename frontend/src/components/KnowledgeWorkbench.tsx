@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKBStore } from '../stores/kbStore';
 import { useConfigStore } from '../stores/configStore';
+import { Icon } from './Icon';
 import type { Document, KnowledgeBase } from '../types';
 
 const DEFAULT_CHUNK_SIZE = 800;
@@ -79,6 +80,10 @@ export function KnowledgeWorkbench() {
     );
   }, [kbs, search]);
 
+  // 按类别拆分 provider：embed 下拉只列向量模型，chat/VL 下拉只列对话模型；无 kind 视为 chat
+  const embedProviders = providers.filter((p) => p.kind === 'embed');
+  const chatProviders = providers.filter((p) => (p.kind ?? 'chat') !== 'embed');
+
   const dirty =
     !!active &&
     (name !== active.name ||
@@ -136,73 +141,92 @@ export function KnowledgeWorkbench() {
   };
 
   return (
-    <div className="flex h-screen flex-1 bg-[#f7f8f5] text-gray-900">
-      <aside className="w-72 border-r border-gray-200 bg-[#fbfbf8] p-4">
-        <div className="mb-4 flex items-center justify-between">
+    <div className="flex h-full flex-1 bg-background text-foreground">
+      {/* 左：知识库列表 */}
+      <aside className="flex w-72 flex-col border-r border-border bg-muted/30 p-4">
+        <div className="mb-4 flex items-start justify-between">
           <div>
-            <div className="text-xs uppercase tracking-[0.18em] text-gray-400">RAG</div>
-            <h1 className="text-xl font-semibold">知识库</h1>
+            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              RAG
+            </div>
+            <h1 className="text-lg font-semibold text-foreground">知识库</h1>
           </div>
-          <button className="rounded bg-gray-900 px-3 py-1.5 text-sm text-white" onClick={create}>
+          <button className="btn-primary !px-2.5 !py-1.5" onClick={create} title="新建知识库">
+            <Icon name="plus" size={15} strokeWidth={2.25} />
             新建
           </button>
         </div>
-        <input
-          className="mb-3 w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-gray-400"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="搜索知识库"
-        />
-        <div className="space-y-2">
-          {filtered.map((kb) => (
-            <button
-              key={kb.id}
-              className={
-                'w-full rounded border px-3 py-3 text-left transition ' +
-                (kb.id === activeId
-                  ? 'border-gray-900 bg-white shadow-sm'
-                  : 'border-transparent hover:border-gray-200 hover:bg-white')
-              }
-              onClick={() => setActiveId(kb.id)}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-sm font-medium">{kb.name}</span>
-                <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">
-                  {kb.doc_count ?? 0} 文档
-                </span>
-              </div>
-              <div className="mt-1 truncate text-xs text-gray-500">
-                {kb.description || '无描述'}
-              </div>
-              <StatusSummary docs={docsByKb[kb.id] ?? []} />
-            </button>
-          ))}
+        <div className="relative mb-3">
+          <Icon
+            name="search"
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            className="field pl-8"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="搜索知识库"
+          />
+        </div>
+        <div className="-mr-2 flex-1 space-y-1.5 overflow-y-auto pr-1">
+          {filtered.length === 0 ? (
+            <div className="px-2 py-10 text-center text-xs text-muted-foreground">暂无知识库</div>
+          ) : (
+            filtered.map((kb) => (
+              <button
+                key={kb.id}
+                className={
+                  'w-full rounded-lg border px-3 py-2.5 text-left transition-colors ' +
+                  (kb.id === activeId
+                    ? 'border-primary/40 bg-card shadow-sm'
+                    : 'border-transparent hover:border-border hover:bg-card')
+                }
+                onClick={() => setActiveId(kb.id)}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate text-sm font-medium text-foreground">{kb.name}</span>
+                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
+                    {kb.doc_count ?? 0} 文档
+                  </span>
+                </div>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {kb.description || '无描述'}
+                </div>
+                <StatusSummary docs={docsByKb[kb.id] ?? []} />
+              </button>
+            ))
+          )}
         </div>
       </aside>
 
+      {/* 中：文档列表 */}
       <main className="flex min-w-0 flex-1">
-        <section className="flex min-w-0 flex-1 flex-col border-r border-gray-200">
+        <section className="flex min-w-0 flex-1 flex-col">
           {active ? (
             <>
-              <header className="border-b border-gray-200 bg-white px-5 py-4">
+              <header className="border-b border-border bg-background px-6 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <h2 className="truncate text-2xl font-semibold">{active.name}</h2>
-                    <p className="mt-1 text-sm text-gray-500">{active.description || '无描述'}</p>
+                    <h2 className="truncate text-xl font-semibold text-foreground">{active.name}</h2>
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {active.description || '无描述'}
+                    </p>
                   </div>
-                  <button
-                    className="rounded border border-red-200 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
-                    onClick={() => removeKB(active.id)}
-                  >
+                  <button className="btn-danger" onClick={() => removeKB(active.id)}>
+                    <Icon name="trash" size={14} />
                     删除
                   </button>
                 </div>
               </header>
-              <div className="flex-1 overflow-y-auto p-5">
+              <div className="flex-1 overflow-y-auto p-6">
+                {/* 拖拽上传区 */}
                 <div
                   className={
-                    'mb-5 flex min-h-32 cursor-pointer flex-col items-center justify-center rounded border border-dashed p-6 text-center transition ' +
-                    (dragging ? 'border-gray-900 bg-white' : 'border-gray-300 bg-[#fbfbf8]')
+                    'mb-5 flex min-h-32 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed p-6 text-center transition-colors ' +
+                    (dragging
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border bg-muted/30 hover:border-primary/40 hover:bg-muted/50')
                   }
                   onClick={() => fileRef.current?.click()}
                   onDragOver={(e) => {
@@ -216,8 +240,16 @@ export function KnowledgeWorkbench() {
                     uploadFiles(e.dataTransfer.files);
                   }}
                 >
-                  <div className="text-sm font-medium">上传 txt / md / PDF</div>
-                  <div className="mt-1 text-xs text-gray-500">拖拽文件到这里，或点击选择</div>
+                  <div
+                    className={
+                      'mb-2 grid h-10 w-10 place-items-center rounded-full transition-colors ' +
+                      (dragging ? 'bg-primary/15 text-primary' : 'bg-muted text-muted-foreground')
+                    }
+                  >
+                    <Icon name="upload" size={18} />
+                  </div>
+                  <div className="text-sm font-medium text-foreground">上传 txt / md / PDF</div>
+                  <div className="mt-1 text-xs text-muted-foreground">拖拽文件到这里，或点击选择</div>
                   <input
                     ref={fileRef}
                     type="file"
@@ -228,15 +260,18 @@ export function KnowledgeWorkbench() {
                   />
                 </div>
 
-                <div className="overflow-hidden rounded border border-gray-200 bg-white">
-                  <div className="grid grid-cols-[1fr_90px_80px_120px] border-b border-gray-100 px-3 py-2 text-xs uppercase text-gray-400">
+                {/* 文档表 */}
+                <div className="overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="grid grid-cols-[1fr_96px_72px_132px] border-b border-border bg-muted/40 px-3 py-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                     <span>文件</span>
                     <span>状态</span>
-                    <span>切片</span>
+                    <span className="text-center">切片</span>
                     <span className="text-right">操作</span>
                   </div>
                   {docs.length === 0 ? (
-                    <div className="px-3 py-8 text-center text-sm text-gray-400">暂无文档</div>
+                    <div className="px-3 py-10 text-center text-sm text-muted-foreground">
+                      暂无文档
+                    </div>
                   ) : (
                     docs.map((doc) => (
                       <DocumentRow
@@ -259,25 +294,32 @@ export function KnowledgeWorkbench() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 items-center justify-center text-gray-400">创建一个知识库</div>
+            <div className="flex flex-1 flex-col items-center justify-center px-6 text-center text-muted-foreground">
+              <div className="mb-3 grid h-14 w-14 place-items-center rounded-2xl bg-muted text-muted-foreground">
+                <Icon name="database" size={26} />
+              </div>
+              <div className="text-sm font-medium text-foreground">创建一个知识库</div>
+              <p className="mt-1 max-w-xs text-xs">点击左上角「新建」开始管理你的文档。</p>
+            </div>
           )}
         </section>
 
-        <aside className="w-[380px] overflow-y-auto bg-white p-5">
+        {/* 右：配置 / 预览 / 召回 */}
+        <aside className="w-[380px] overflow-y-auto border-l border-border bg-muted/30 p-5">
           {active && (
             <div className="space-y-6">
               <section>
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="font-semibold">配置</h3>
+                  <h3 className="text-sm font-semibold text-foreground">配置</h3>
                   <button
-                    className="rounded bg-gray-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+                    className="btn-primary !px-3 !py-1.5 text-xs disabled:opacity-40"
                     disabled={!dirty || !name.trim()}
                     onClick={save}
                   >
                     保存
                   </button>
                 </div>
-                <div className="space-y-3">
+                <div className="space-y-2.5">
                   <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
                   <textarea
                     className="field min-h-20 resize-none"
@@ -285,46 +327,80 @@ export function KnowledgeWorkbench() {
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="描述"
                   />
-                  <select className="field" value={providerId} onChange={(e) => setProviderId(e.target.value)}>
-                    <option value="">未选择 Embedding 模型</option>
-                    {providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} · {p.embed_model || '未配置 embed model'}
-                      </option>
-                    ))}
-                  </select>
-                  <select className="field" value={chatProviderId} onChange={(e) => setChatProviderId(e.target.value)}>
-                    <option value="">未选择 Chat/VL 模型（图片描述用，可选）</option>
-                    {providers.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} · {p.chat_model || '未配置 chat model'}
-                      </option>
-                    ))}
-                  </select>
-                  <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Embedding 模型
+                    </span>
+                    <select
+                      className="field"
+                      value={providerId}
+                      onChange={(e) => setProviderId(e.target.value)}
+                    >
+                      {embedProviders.length === 0 ? (
+                        <option value="">暂无 Embed 模型，请先在设置添加</option>
+                      ) : (
+                        <option value="">未选择</option>
+                      )}
+                      {embedProviders.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.embed_model || '未配置'}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
+                      用于文档切片的向量检索
+                    </span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Chat / VL 模型
+                    </span>
+                    <select
+                      className="field"
+                      value={chatProviderId}
+                      onChange={(e) => setChatProviderId(e.target.value)}
+                    >
+                      <option value="">未选择（可选）</option>
+                      {chatProviders.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.chat_model || '未配置'}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
+                      用于图片描述等多模态任务
+                    </span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2.5">
                     <NumberField label="切片大小" value={chunkSize} onChange={setChunkSize} />
                     <NumberField label="重叠长度" value={overlap} onChange={setOverlap} />
                   </div>
                 </div>
                 {dirty && docs.length > 0 && (
-                  <div className="mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    配置变化后需要重建索引
-                    <button className="ml-2 underline" onClick={retryAll}>
-                      重建全部
-                    </button>
+                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm text-foreground">
+                    <Icon name="alert-circle" size={15} className="mt-0.5 shrink-0 text-warning" />
+                    <div>
+                      配置变化后需要重建索引
+                      <button
+                        className="ml-2 font-medium text-primary hover:underline"
+                        onClick={retryAll}
+                      >
+                        重建全部
+                      </button>
+                    </div>
                   </div>
                 )}
               </section>
 
               <section>
-                <h3 className="mb-3 font-semibold">切片预览</h3>
+                <h3 className="mb-3 text-sm font-semibold text-foreground">切片预览</h3>
                 <textarea
                   className="field min-h-24 resize-none"
                   value={previewText}
                   onChange={(e) => setPreviewText(e.target.value)}
-                  placeholder="粘贴文本"
+                  placeholder="粘贴文本以预览切片效果"
                 />
-                <button className="mt-2 rounded border px-3 py-1.5 text-sm" onClick={runPreview}>
+                <button className="btn-outline mt-2 !py-1.5 text-xs" onClick={runPreview}>
                   预览
                 </button>
                 <div className="mt-3 space-y-2">
@@ -335,7 +411,7 @@ export function KnowledgeWorkbench() {
               </section>
 
               <section>
-                <h3 className="mb-3 font-semibold">召回测试</h3>
+                <h3 className="mb-3 text-sm font-semibold text-foreground">召回测试</h3>
                 <div className="flex gap-2">
                   <input
                     className="field"
@@ -346,18 +422,24 @@ export function KnowledgeWorkbench() {
                     }}
                     placeholder="输入问题"
                   />
-                  <button className="rounded bg-gray-900 px-3 text-sm text-white" onClick={runRetrieve}>
+                  <button className="btn-primary shrink-0 !px-3 text-xs" onClick={runRetrieve}>
                     测试
                   </button>
                 </div>
-                <div className="mt-3 space-y-3">
+                <div className="mt-3 space-y-2.5">
                   {retrieveHits.map((hit) => (
-                    <div key={hit.chunk_id} className="rounded border border-gray-200 p-3">
-                      <div className="mb-2 flex items-center justify-between gap-2 text-xs text-gray-500">
-                        <span className="truncate">{hit.filename} · #{hit.ordinal}</span>
-                        <span>相似度 {(hit.similarity * 100).toFixed(1)}%</span>
+                    <div key={hit.chunk_id} className="rounded-lg border border-border bg-card p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+                        <span className="truncate font-mono text-muted-foreground">
+                          {hit.filename} · #{hit.ordinal}
+                        </span>
+                        <span className="shrink-0 font-medium tabular-nums text-primary">
+                          {(hit.similarity * 100).toFixed(1)}%
+                        </span>
                       </div>
-                      <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-sm">{hit.text}</p>
+                      <p className="max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-foreground/80">
+                        {hit.text}
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -375,10 +457,10 @@ function StatusSummary({ docs }: { docs: Document[] }) {
   const failed = docs.filter((d) => d.status === 'failed').length;
   const ready = docs.filter((d) => d.status === 'ready').length;
   return (
-    <div className="mt-2 flex gap-1 text-[10px]">
-      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-emerald-700">{ready} ready</span>
-      <span className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-600">{processing} processing</span>
-      {failed > 0 && <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">{failed} failed</span>}
+    <div className="mt-2 flex flex-wrap gap-1">
+      <span className="status-pill bg-success/10 text-success">{ready} ready</span>
+      <span className="status-pill bg-muted text-muted-foreground">{processing} processing</span>
+      {failed > 0 && <span className="status-pill bg-destructive/10 text-destructive">{failed} failed</span>}
     </div>
   );
 }
@@ -401,33 +483,50 @@ function DocumentRow({
   onDelete: () => void;
 }) {
   return (
-    <div className="border-b border-gray-100 last:border-b-0">
-      <div className="grid grid-cols-[1fr_90px_80px_120px] items-center px-3 py-3 text-sm">
-        <button className="min-w-0 text-left" onClick={onToggle}>
-          <div className="truncate font-medium">{doc.filename}</div>
-          <div className="text-xs text-gray-400">{formatSize(doc.file_size)}</div>
-          {doc.error && <div className="mt-1 truncate text-xs text-red-600">{doc.error}</div>}
+    <div className="border-t border-border first:border-t-0">
+      <div className="grid grid-cols-[1fr_96px_72px_132px] items-center px-3 py-3 text-sm">
+        <button className="flex min-w-0 items-center gap-2 text-left" onClick={onToggle}>
+          <Icon name="file-text" size={16} className="shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <div className="truncate font-medium text-foreground">{doc.filename}</div>
+            <div className="text-xs text-muted-foreground">{formatSize(doc.file_size)}</div>
+            {doc.error && <div className="mt-0.5 truncate text-xs text-destructive">{doc.error}</div>}
+          </div>
         </button>
-        <span className={'text-xs ' + statusClass(doc.status)}>{doc.status}</span>
-        <span className="text-xs text-gray-500">{doc.chunk_count}</span>
-        <span className="flex justify-end gap-2 text-xs">
-          <button className="hover:underline" onClick={onToggle}>
-            切片
+        <span>
+          <StatusBadge status={doc.status} />
+        </span>
+        <span className="text-center text-xs tabular-nums text-muted-foreground">{doc.chunk_count}</span>
+        <span className="flex items-center justify-end gap-1 text-xs">
+          <button
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="查看切片"
+            onClick={onToggle}
+          >
+            <Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={15} />
           </button>
-          <button className="hover:underline" onClick={onRetry}>
-            重试
+          <button
+            className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+            title="重试"
+            onClick={onRetry}
+          >
+            <Icon name="refresh-cw" size={14} />
           </button>
-          <button className="text-red-600 hover:underline" onClick={onDelete}>
-            删除
+          <button
+            className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+            title="删除"
+            onClick={onDelete}
+          >
+            <Icon name="trash" size={14} />
           </button>
         </span>
       </div>
       {expanded && (
-        <div className="bg-gray-50 px-3 py-3">
-          <div className="mb-2 text-xs text-gray-400">{kb.name}</div>
+        <div className="border-t border-border bg-muted/30 px-3 py-3">
+          <div className="mb-2 text-xs text-muted-foreground">{kb.name}</div>
           <div className="space-y-2">
             {chunks.length === 0 ? (
-              <div className="text-xs text-gray-400">暂无切片</div>
+              <div className="text-xs text-muted-foreground">暂无切片</div>
             ) : (
               chunks.slice(0, 8).map((chunk) => (
                 <ChunkBlock key={chunk.ordinal} ordinal={chunk.ordinal} text={chunk.text} />
@@ -438,6 +537,16 @@ function DocumentRow({
       )}
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const cls =
+    status === 'ready'
+      ? 'bg-success/10 text-success'
+      : status === 'failed'
+        ? 'bg-destructive/10 text-destructive'
+        : 'bg-muted text-muted-foreground';
+  return <span className={'status-pill ' + cls}>{status}</span>;
 }
 
 function NumberField({
@@ -451,7 +560,7 @@ function NumberField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs text-gray-500">{label}</span>
+      <span className="mb-1 block text-xs text-muted-foreground">{label}</span>
       <input
         className="field"
         type="number"
@@ -465,9 +574,13 @@ function NumberField({
 
 function ChunkBlock({ ordinal, text }: { ordinal: number; text: string }) {
   return (
-    <div className="rounded border border-gray-200 bg-white p-2">
-      <div className="mb-1 text-[10px] uppercase text-gray-400">chunk {ordinal}</div>
-      <div className="max-h-28 overflow-y-auto whitespace-pre-wrap text-xs leading-5 text-gray-700">{text}</div>
+    <div className="rounded-lg border border-border bg-background p-2.5">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+        chunk {ordinal}
+      </div>
+      <div className="max-h-28 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground/80">
+        {text}
+      </div>
     </div>
   );
 }
@@ -477,10 +590,4 @@ function formatSize(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function statusClass(status: string) {
-  if (status === 'ready') return 'text-emerald-600';
-  if (status === 'failed') return 'text-red-600';
-  return 'text-gray-500';
 }

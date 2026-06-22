@@ -62,7 +62,7 @@ func (h *ConfigHandler) createProvider(w http.ResponseWriter, r *http.Request) {
 	p := store.Provider{
 		ID: "prov_" + ulid.Make().String(), Name: dto.Name, BaseURL: dto.BaseURL,
 		APIKey: dto.APIKey, ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
-		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
+		Kind: dto.Kind, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := h.DB.CreateProvider(p); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -83,7 +83,7 @@ func (h *ConfigHandler) updateProvider(w http.ResponseWriter, r *http.Request) {
 	_ = h.DB.DeleteProvider(id)
 	p := store.Provider{
 		ID: id, Name: dto.Name, BaseURL: dto.BaseURL, APIKey: dto.APIKey,
-		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
+		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel, Kind: dto.Kind,
 		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := h.DB.CreateProvider(p); err != nil {
@@ -208,7 +208,8 @@ func (h *ConfigHandler) setTitleProvider(w http.ResponseWriter, r *http.Request)
 func toProviderDTO(p store.Provider) providerDTO {
 	return providerDTO{
 		ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKey: p.APIKey,
-		ChatModel: p.ChatModel, EmbedModel: p.EmbedModel, IsDefault: p.IsDefault,
+		ChatModel: p.ChatModel, EmbedModel: p.EmbedModel, Kind: p.Kind,
+		IsDefault: p.IsDefault,
 	}
 }
 

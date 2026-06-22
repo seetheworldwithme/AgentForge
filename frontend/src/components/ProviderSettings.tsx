@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useConfigStore } from '../stores/configStore';
 import { api } from '../lib/api';
+import { Icon } from './Icon';
 import type { Provider } from '../types';
 
 type Status =
@@ -84,6 +85,12 @@ export function ProviderSettings() {
   // 模型类别：chat / embed
   const [category, setCategory] = useState<ModelCategory>('chat');
   const [titleProviderId, setTitleProviderId] = useState('');
+
+  // 标题生成是 chat 任务，下拉只列对话模型（排除 embed 向量模型）；无 kind 视为 chat
+  const chatProviders = useMemo(
+    () => providers.filter((p) => (p.kind ?? 'chat') !== 'embed'),
+    [providers],
+  );
 
   useEffect(() => {
     if (!loaded) load();
@@ -182,9 +189,8 @@ export function ProviderSettings() {
       return;
     }
     try {
-      // 根据类别清洗：embed 模式下清空 chat_model？这里仍保留 chat_model
-      // 以便兼容后端（后端 chat_model 必填），仅是 UI 引导不同
-      const payload: Form = { ...form };
+      // 持久化类别（chat/embed），供对话下拉框按类别过滤；两个 model 字段都保留。
+      const payload = { ...form, kind: category };
       if (editingId) {
         await update(editingId, payload);
         setStatus({ kind: 'success', message: '测试通过，已更新' });
@@ -207,48 +213,51 @@ export function ProviderSettings() {
   return (
     <div className="space-y-5">
       <div>
-        {/* 标题右侧增加"添加"按钮 */}
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-lg font-semibold">已配置的模型</h2>
-          <button
-            className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm hover:bg-blue-700"
-            onClick={openAdd}
-          >
-            + 添加
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-base font-semibold text-foreground">已配置的模型</h2>
+          <button className="btn-primary !py-1.5 text-xs" onClick={openAdd}>
+            <Icon name="plus" size={15} strokeWidth={2.25} />
+            添加
           </button>
         </div>
         {providers.length === 0 ? (
-          <p className="text-sm text-gray-500">还没有模型，点击右上角"添加"配置一个。</p>
+          <div className="rounded-xl border border-dashed border-border bg-muted/30 px-4 py-10 text-center text-sm text-muted-foreground">
+            还没有模型，点击右上角「添加」配置一个。
+          </div>
         ) : (
           <div className="space-y-2">
             {providers.map((p) => (
               <div
                 key={p.id}
-                className="flex items-center gap-2 rounded border px-3 py-2 text-sm hover:bg-gray-50"
+                className="flex items-center gap-3 rounded-xl border border-border bg-card px-3 py-2.5 transition-colors hover:bg-muted/40"
               >
-                <div className="flex-1 min-w-0">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+                  <Icon name={p.kind === 'embed' ? 'database' : 'bot'} size={18} />
+                </div>
+                <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">{p.name}</span>
+                    <span className="truncate text-sm font-medium text-foreground">{p.name}</span>
+                    <KindBadge kind={p.kind} />
                     {p.is_default && (
-                      <span className="text-xs bg-blue-100 text-blue-700 rounded px-1.5 py-0.5">
-                        默认
-                      </span>
+                      <span className="status-pill bg-primary/10 text-primary">默认</span>
                     )}
                   </div>
-                  <div className="text-xs text-gray-500 truncate">
+                  <div className="truncate font-mono text-xs text-muted-foreground">
                     {p.chat_model} · {p.base_url}
                   </div>
                 </div>
                 <button
-                  className="text-xs border rounded px-2 py-1 hover:bg-gray-100"
+                  className="btn-outline gap-1.5 !px-2 !py-1.5 text-xs"
                   onClick={() => startEdit(p)}
                 >
+                  <Icon name="pencil" size={13} />
                   编辑
                 </button>
                 <button
-                  className="text-xs text-red-600 border border-red-200 rounded px-2 py-1 hover:bg-red-50"
+                  className="btn-danger gap-1.5 !px-2 !py-1.5 text-xs"
                   onClick={() => onDelete(p.id)}
                 >
+                  <Icon name="trash" size={13} />
                   删除
                 </button>
               </div>
@@ -258,10 +267,12 @@ export function ProviderSettings() {
       </div>
 
       {/* 标题生成模型：独立 provider，与主对话并行、互不卡顿 */}
-      <div className="rounded border p-3 text-sm">
-        <label className="block text-xs text-gray-600 mb-1">标题生成模型</label>
+      <div className="rounded-xl border border-border bg-card p-4">
+        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
+          标题生成模型
+        </label>
         <select
-          className="border rounded p-1.5 text-sm w-full"
+          className="field"
           value={titleProviderId}
           onChange={async (e) => {
             const v = e.target.value;
@@ -275,40 +286,48 @@ export function ProviderSettings() {
           }}
         >
           <option value="">未设置（跟随各会话的主对话模型）</option>
-          {providers.map((p) => (
+          {chatProviders.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name} · {p.chat_model}
             </option>
           ))}
         </select>
-        <p className="text-xs text-gray-400 mt-1">
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
           用独立的模型生成会话标题，与主对话并行、互不卡顿。建议选一个快的小模型。
         </p>
       </div>
 
       {/* 添加 / 编辑 弹窗 */}
       {modalOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg w-[520px] max-w-[92vw] flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-3 border-b">
-              <h3 className="font-semibold">
+        <div
+          className="fixed inset-0 z-[60] flex animate-fade-in items-center justify-center bg-black/40 backdrop-blur-sm"
+          onClick={closeModal}
+        >
+          <div
+            className="flex w-[520px] max-w-[92vw] animate-scale-in flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
+              <h3 className="font-semibold text-foreground">
                 {editingId ? '编辑模型（保存前自动测试连通性）' : '添加模型（保存前自动测试连通性）'}
               </h3>
               <button
-                className="text-gray-500 hover:text-gray-800 text-2xl leading-none"
+                className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 onClick={closeModal}
                 aria-label="关闭"
               >
-                ×
+                <Icon name="x" size={18} />
               </button>
             </div>
 
-            <div className="p-5 space-y-3">
+            <div className="space-y-3 p-5">
               {/* 厂商下拉 */}
               <div>
-                <label className="block text-xs text-gray-600 mb-1">模型厂商</label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  模型厂商
+                </label>
                 <select
-                  className="border rounded p-1.5 text-sm w-full"
+                  className="field"
                   value={vendorKey}
                   onChange={(e) => onSelectVendor(e.target.value)}
                 >
@@ -322,15 +341,17 @@ export function ProviderSettings() {
 
               {/* 模型类别：chat / embed */}
               <div>
-                <label className="block text-xs text-gray-600 mb-1">模型类别</label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  模型类别
+                </label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     className={
-                      'flex-1 border rounded py-1.5 text-sm ' +
+                      'flex-1 rounded-md border py-1.5 text-sm transition-colors ' +
                       (category === 'chat'
-                        ? 'bg-blue-50 border-blue-500 text-blue-700'
-                        : 'hover:bg-gray-50')
+                        ? 'border-primary/40 bg-primary/10 font-medium text-primary'
+                        : 'border-border text-muted-foreground hover:bg-muted')
                     }
                     onClick={() => setCategory('chat')}
                   >
@@ -339,10 +360,10 @@ export function ProviderSettings() {
                   <button
                     type="button"
                     className={
-                      'flex-1 border rounded py-1.5 text-sm ' +
+                      'flex-1 rounded-md border py-1.5 text-sm transition-colors ' +
                       (category === 'embed'
-                        ? 'bg-blue-50 border-blue-500 text-blue-700'
-                        : 'hover:bg-gray-50')
+                        ? 'border-primary/40 bg-primary/10 font-medium text-primary'
+                        : 'border-border text-muted-foreground hover:bg-muted')
                     }
                     onClick={() => setCategory('embed')}
                   >
@@ -351,21 +372,21 @@ export function ProviderSettings() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2.5">
                 <input
-                  className="border rounded p-1.5 text-sm col-span-2"
+                  className="field col-span-2"
                   placeholder="名称（如 OpenAI）"
                   value={form.name}
                   onChange={(e) => setField('name', e.target.value)}
                 />
                 <input
-                  className="border rounded p-1.5 text-sm col-span-2"
+                  className="field col-span-2"
                   placeholder="Base URL"
                   value={form.base_url}
                   onChange={(e) => setField('base_url', e.target.value)}
                 />
                 <input
-                  className="border rounded p-1.5 text-sm col-span-2"
+                  className="field col-span-2"
                   placeholder="API Key"
                   type="password"
                   value={form.api_key}
@@ -373,14 +394,14 @@ export function ProviderSettings() {
                 />
                 {category === 'chat' ? (
                   <input
-                    className="border rounded p-1.5 text-sm col-span-2"
+                    className="field col-span-2"
                     placeholder="Chat model"
                     value={form.chat_model}
                     onChange={(e) => setField('chat_model', e.target.value)}
                   />
                 ) : (
                   <input
-                    className="border rounded p-1.5 text-sm col-span-2"
+                    className="field col-span-2"
                     placeholder="Embed model"
                     value={form.embed_model}
                     onChange={(e) => setField('embed_model', e.target.value)}
@@ -388,9 +409,10 @@ export function ProviderSettings() {
                 )}
               </div>
 
-              <label className="flex items-center gap-1.5 text-sm">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
                 <input
                   type="checkbox"
+                  className="h-4 w-4 rounded border-input accent-primary"
                   checked={form.is_default}
                   onChange={(e) => setField('is_default', e.target.checked)}
                 />
@@ -398,34 +420,38 @@ export function ProviderSettings() {
               </label>
 
               {status.kind === 'error' && (
-                <div className="rounded bg-red-50 border border-red-200 text-red-700 text-sm p-2 whitespace-pre-wrap break-all">
-                  ✗ {status.message}
+                <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">
+                  <Icon name="alert-circle" size={15} className="mt-0.5 shrink-0" />
+                  <span className="whitespace-pre-wrap break-all">{status.message}</span>
                 </div>
               )}
               {status.kind === 'success' && (
-                <div className="rounded bg-green-50 border border-green-200 text-green-700 text-sm p-2">
-                  ✓ {status.message}
+                <div className="flex items-start gap-2 rounded-lg border border-success/30 bg-success/10 p-2.5 text-sm text-success">
+                  <Icon name="check" size={15} className="mt-0.5 shrink-0" strokeWidth={2.5} />
+                  <span className="whitespace-pre-wrap break-all">{status.message}</span>
                 </div>
               )}
             </div>
 
-            <div className="flex gap-2 px-5 py-3 border-t justify-end">
-              <button
-                className="border rounded px-3 py-1.5 text-sm"
-                onClick={closeModal}
-              >
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5">
+              <button className="btn-outline text-sm" onClick={closeModal}>
                 取消
               </button>
               <button
-                className="bg-blue-600 text-white rounded px-3 py-1.5 text-sm disabled:opacity-50"
+                className="btn-primary text-sm"
                 onClick={save}
                 disabled={status.kind === 'testing'}
               >
-                {status.kind === 'testing'
-                  ? '测试中…'
-                  : editingId
-                    ? '测试并更新'
-                    : '测试并保存'}
+                {status.kind === 'testing' ? (
+                  <>
+                    <Icon name="loader" size={15} className="animate-spin" />
+                    测试中…
+                  </>
+                ) : editingId ? (
+                  '测试并更新'
+                ) : (
+                  '测试并保存'
+                )}
               </button>
             </div>
           </div>
@@ -433,4 +459,12 @@ export function ProviderSettings() {
       )}
     </div>
   );
+}
+
+// provider 类别徽章：一眼区分对话模型 / 向量模型，便于管理；无 kind 视为对话
+function KindBadge({ kind }: { kind?: 'chat' | 'embed' }) {
+  if (kind === 'embed') {
+    return <span className="status-pill bg-accent text-accent-foreground">向量</span>;
+  }
+  return <span className="status-pill bg-muted text-muted-foreground">对话</span>;
 }

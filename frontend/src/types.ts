@@ -8,6 +8,7 @@ export interface Provider {
   api_key: string;
   chat_model: string;
   embed_model?: string;
+  kind?: 'chat' | 'embed'; // 后端持久化；空/缺省视为 chat（向后兼容老数据）
   is_default: boolean;
 }
 

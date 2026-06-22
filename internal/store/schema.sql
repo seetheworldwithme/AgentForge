@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS providers (
     api_key     TEXT NOT NULL,
     chat_model  TEXT NOT NULL,
     embed_model TEXT,
+    kind        TEXT, -- 'chat' | 'embed'；NULL 视为 chat（向后兼容老数据）
     is_default  INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL

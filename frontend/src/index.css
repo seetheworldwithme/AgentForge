@@ -2,8 +2,141 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    --radius: 0.625rem;
+
+    /* 亮色：slate 中性 + indigo 强调 */
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 226 100% 97%;
+    --accent-foreground: 243 75% 45%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 40%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 45%;
+    --warning-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 243 75% 59%;
+    --sidebar: 210 33% 97%;
+    --sidebar-foreground: 222 47% 11%;
+    --sidebar-border: 214 30% 90%;
+    --sidebar-accent: 214 30% 93%;
+    --sidebar-accent-foreground: 222 47% 11%;
+  }
+
+  .dark {
+    /* 暗色：slate 深底 + 更亮的 indigo，对比度独立校准 */
+    --background: 224 47% 8%;
+    --foreground: 210 40% 98%;
+    --card: 222 44% 12%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 44% 13%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 239 84% 67%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 239 60% 20%;
+    --accent-foreground: 239 84% 80%;
+    --destructive: 0 63% 50%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 64% 48%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 100%;
+    --border: 217 33% 22%;
+    --input: 217 33% 24%;
+    --ring: 239 84% 67%;
+    --sidebar: 222 45% 10%;
+    --sidebar-foreground: 210 40% 98%;
+    --sidebar-border: 217 33% 20%;
+    --sidebar-accent: 217 33% 16%;
+    --sidebar-accent-foreground: 210 40% 98%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    @apply bg-primary/20;
+  }
+  /* 细滚动条，跟随主题 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full border-2 border-solid border-transparent bg-muted-foreground/30 bg-clip-content;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/45 bg-clip-content;
+  }
+}
+
 @layer components {
+  /* 表单控件 */
   .field {
-    @apply w-full rounded border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-500;
+    @apply w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  /* 卡片表面 */
+  .card {
+    @apply rounded-xl border border-border bg-card shadow-sm;
+  }
+
+  /* 按钮基类与变体 */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-md text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-primary px-3.5 py-2 text-primary-foreground shadow-sm hover:bg-primary/90 active:bg-primary/95;
+  }
+  .btn-outline {
+    @apply btn border border-input bg-card px-3 py-2 text-foreground hover:bg-accent hover:text-accent-foreground;
+  }
+  .btn-ghost {
+    @apply btn px-2.5 py-2 text-muted-foreground hover:bg-accent hover:text-accent-foreground;
+  }
+  .btn-danger {
+    @apply btn border border-destructive/30 bg-transparent px-3 py-2 text-destructive hover:bg-destructive/10;
+  }
+
+  /* 状态药丸 */
+  .status-pill {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none;
   }
 }

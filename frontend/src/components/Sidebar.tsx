@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
+import { useThemeStore } from '../stores/themeStore';
+import { Icon, type IconName } from './Icon';
 import type { Session } from '../types';
 
 export function Sidebar({
@@ -22,6 +24,8 @@ export function Sidebar({
   const workdir = useWorkDirStore((s) => s.workdir);
   const wdLoaded = useWorkDirStore((s) => s.loaded);
   const wdLoad = useWorkDirStore((s) => s.load);
+  const toggleTheme = useThemeStore((s) => s.toggle);
+  const themeResolved = useThemeStore((s) => s.resolved);
 
   useEffect(() => {
     loadSessions();
@@ -68,48 +72,109 @@ export function Sidebar({
   }, [groups, workdir]);
 
   return (
-    <div className="w-64 border-r flex flex-col bg-gray-50">
-      <div className="border-b p-2">
-        <div className="grid grid-cols-3 gap-1 rounded bg-gray-100 p-1 text-sm">
-          <button
-            className={'rounded px-2 py-1.5 ' + (activeView === 'chat' ? 'bg-white shadow-sm' : 'text-gray-500')}
-            onClick={() => onViewChange('chat')}
-          >
-            对话
-          </button>
-          <button
-            className={'rounded px-2 py-1.5 ' + (activeView === 'knowledge' ? 'bg-white shadow-sm' : 'text-gray-500')}
-            onClick={() => onViewChange('knowledge')}
-          >
-            知识库
-          </button>
-          <button className="rounded px-2 py-1.5 text-gray-500" onClick={onOpenSettings}>
-            设置
-          </button>
+    <div className="flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar">
+      {/* 品牌区 */}
+      <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
+        <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+          <Icon name="sparkles" size={18} strokeWidth={2} />
+        </div>
+        <div className="leading-tight">
+          <div className="text-[15px] font-semibold tracking-tight text-foreground">AgentForge</div>
+          <div className="text-[11px] text-muted-foreground">AI 工作台</div>
         </div>
       </div>
-      <div className="p-3 flex gap-2">
+
+      {/* 导航 */}
+      <nav className="px-2">
+        <NavItem
+          icon="message-square"
+          label="对话"
+          active={activeView === 'chat'}
+          onClick={() => onViewChange('chat')}
+        />
+        <NavItem
+          icon="book-open"
+          label="知识库"
+          active={activeView === 'knowledge'}
+          onClick={() => onViewChange('knowledge')}
+        />
+      </nav>
+
+      {/* 新对话 */}
+      <div className="px-3 pb-2 pt-3">
         <button
-          className="flex-1 bg-blue-600 text-white rounded py-2 text-sm"
+          className="btn-primary w-full"
           onClick={() => {
             onViewChange('chat');
             handleNewChat();
           }}
         >
-          + 新对话
+          <Icon name="plus" size={16} strokeWidth={2.25} />
+          新对话
         </button>
       </div>
-      <div className="flex-1 overflow-y-auto px-2">
-        {groupKeys.map((dir) => (
-          <SessionGroup key={dir || '__ungrouped__'} dir={dir} sessions={groups.get(dir) ?? []} />
-        ))}
+
+      {/* 会话列表 */}
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
+        {groupKeys.length === 0 ? (
+          <div className="px-2 py-10 text-center text-xs text-muted-foreground">
+            暂无会话
+            <br />
+            点击「新对话」开始
+          </div>
+        ) : (
+          groupKeys.map((dir) => (
+            <SessionGroup key={dir || '__ungrouped__'} dir={dir} sessions={groups.get(dir) ?? []} />
+          ))
+        )}
       </div>
-      <div className="border-t p-2 flex gap-2">
-        <button className="flex-1 text-sm border rounded py-1" onClick={onOpenSettings}>
+
+      {/* 底部：设置 + 主题切换 */}
+      <div className="flex items-center gap-1 border-t border-sidebar-border px-2 py-2">
+        <button className="btn-ghost flex-1 justify-start gap-2" onClick={onOpenSettings}>
+          <Icon name="settings" size={16} />
           设置
+        </button>
+        <button
+          className="btn-ghost h-9 w-9 px-0"
+          onClick={toggleTheme}
+          title={themeResolved === 'dark' ? '切换到亮色' : '切换到暗色'}
+          aria-label="切换主题"
+        >
+          <Icon name={themeResolved === 'dark' ? 'sun' : 'moon'} size={16} />
         </button>
       </div>
     </div>
+  );
+}
+
+function NavItem({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: IconName;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        'group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors ' +
+        (active
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+          : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground')
+      }
+    >
+      {active && (
+        <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary" />
+      )}
+      <Icon name={icon} size={17} />
+      {label}
+    </button>
   );
 }
 
@@ -148,77 +213,81 @@ function SessionGroup({ dir, sessions }: { dir: string; sessions: Session[] }) {
   };
 
   return (
-    <div className="mb-1">
+    <div className="mb-0.5">
       <div
-        className="group flex items-center gap-1 px-1 py-1 rounded cursor-pointer text-xs text-gray-500 hover:bg-gray-200 select-none"
+        className="group flex select-none items-center gap-1 rounded-md px-1.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/50"
         onClick={toggle}
         title={dir || '未分组'}
       >
-        <span
-          className="inline-block transition-transform duration-150 text-[9px] text-gray-400"
-          style={{ transform: open ? 'rotate(90deg)' : '' }}
-        >
-          ▶
-        </span>
-        <span className="flex-1 truncate">{dir ? `📁 ${basename}` : '未分组'}</span>
+        <Icon
+          name="chevron-right"
+          size={13}
+          className={'shrink-0 transition-transform duration-150 ' + (open ? 'rotate-90' : '')}
+        />
+        <Icon
+          name={dir ? 'folder' : 'folder-open'}
+          size={14}
+          className="shrink-0 text-muted-foreground/70"
+        />
+        <span className="flex-1 truncate">{dir ? basename : '未分组'}</span>
         {confirming ? (
-          <span className="flex items-center gap-1">
-            <span className="text-red-500">删除全部?</span>
+          <span className="flex items-center gap-0.5">
+            <span className="mr-0.5 text-[10px] text-destructive">删除全部?</span>
             <button
-              className="hover:text-red-700 text-red-600"
+              className="rounded p-0.5 text-destructive hover:bg-destructive/10"
               title="确认删除"
               onClick={(e) => {
                 e.stopPropagation();
                 onDelete();
               }}
             >
-              ✓
+              <Icon name="check" size={13} strokeWidth={2.5} />
             </button>
             <button
-              className="hover:text-gray-700"
+              className="rounded p-0.5 hover:bg-sidebar hover:text-foreground"
               title="取消"
               onClick={(e) => {
                 e.stopPropagation();
                 setConfirming(false);
               }}
             >
-              ✗
+              <Icon name="x" size={13} strokeWidth={2.5} />
             </button>
           </span>
         ) : (
-          <span className="flex items-center gap-1">
+          <span className="flex items-center gap-0.5">
             {dir && (
-              <span className="flex items-center gap-1.5 opacity-0 group-hover:opacity-100">
+              <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                 <button
-                  className="hover:text-blue-600"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-primary"
                   title="在此目录新建对话"
                   onClick={(e) => {
                     e.stopPropagation();
                     onNew();
                   }}
                 >
-                  ＋
+                  <Icon name="plus" size={13} strokeWidth={2.25} />
                 </button>
                 <button
-                  className="hover:text-red-600"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-destructive"
                   title="删除该目录下全部对话"
                   onClick={(e) => {
                     e.stopPropagation();
                     setConfirming(true);
                   }}
                 >
-                  🗑
+                  <Icon name="trash" size={13} />
                 </button>
               </span>
             )}
-            <span className="text-[10px] text-gray-400">{sessions.length}</span>
+            <span className="ml-0.5 text-[10px] tabular-nums text-muted-foreground/70">
+              {sessions.length}
+            </span>
           </span>
         )}
       </div>
       {open &&
-        sessions.map((s) => (
-          <SessionRow key={s.id} session={s} active={s.id === currentId} />
-        ))}
+        sessions.map((s) => <SessionRow key={s.id} session={s} active={s.id === currentId} />)}
     </div>
   );
 }
@@ -249,10 +318,10 @@ function SessionRow({ session, active }: { session: Session; active: boolean }) 
 
   if (editing) {
     return (
-      <div className="flex items-center px-1 py-1 rounded text-sm bg-blue-50">
+      <div className="px-1.5 py-1">
         <input
           autoFocus
-          className="flex-1 border rounded px-1.5 py-1 text-sm outline-none"
+          className="w-full rounded-md border border-input bg-card px-2 py-1.5 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commit}
@@ -273,28 +342,33 @@ function SessionRow({ session, active }: { session: Session; active: boolean }) 
   return (
     <div
       className={
-        'group flex items-center px-2 py-2 rounded cursor-pointer text-sm ' +
-        (active ? 'bg-blue-100' : 'hover:bg-gray-200')
+        'group relative flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ' +
+        (active
+          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+          : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50')
       }
       onClick={() => select(session.id)}
     >
-      <span className="flex-1 truncate">{session.title}</span>
+      {active && (
+        <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary" />
+      )}
+      <span className={'flex-1 truncate ' + (active ? 'font-medium' : '')}>{session.title}</span>
       <button
-        className="opacity-0 group-hover:opacity-100 text-gray-500 text-xs px-1"
+        className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar hover:text-foreground group-hover:opacity-100"
         title="重命名"
         onClick={startEdit}
       >
-        ✎
+        <Icon name="pencil" size={13} />
       </button>
       <button
-        className="opacity-0 group-hover:opacity-100 text-red-500 text-xs px-1"
+        className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar hover:text-destructive group-hover:opacity-100"
         title="删除"
         onClick={(e) => {
           e.stopPropagation();
           remove(session.id);
         }}
       >
-        ×
+        <Icon name="x" size={14} strokeWidth={2} />
       </button>
     </div>
   );
