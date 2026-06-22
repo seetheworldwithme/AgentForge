@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"time"
 
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/tools"
@@ -36,4 +37,7 @@ type Deps struct {
 	RAG     RAGRetriever  // may be nil when RAG is off
 	Skills  SkillProvider // may be nil when skills are off
 	MaxIter int           // safety cap, default 20
+	// LLMRetryWait is the delay before retrying a recoverable LLM error
+	// (notably provider-side 429 rate limiting). Defaults to 30 seconds.
+	LLMRetryWait time.Duration
 }

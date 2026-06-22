@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/agent-rust/core/internal/tools"
+	"github.com/go-chi/chi/v5"
 )
 
 type ToolsHandler struct {
@@ -14,6 +14,7 @@ type ToolsHandler struct {
 
 func (h *ToolsHandler) Routes(r chi.Router) {
 	r.Get("/tools", h.list)
+	r.Get("/tools/pending", h.pending)
 	r.Post("/tools/confirm", h.confirm)
 }
 
@@ -21,6 +22,20 @@ func (h *ToolsHandler) list(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tools": []string{
 		"bash", "file_read", "file_write", "file_edit", "grep",
 	}})
+}
+
+func (h *ToolsHandler) pending(w http.ResponseWriter, r *http.Request) {
+	pending := h.Gate.Pending()
+	out := make([]map[string]any, 0, len(pending))
+	for _, req := range pending {
+		out = append(out, map[string]any{
+			"request_id":     req.ID,
+			"tool":           req.Tool,
+			"input":          map[string]any{"raw": req.Args},
+			"match_key_hint": req.MatchKeyHint,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pending": out})
 }
 
 type confirmRequest struct {

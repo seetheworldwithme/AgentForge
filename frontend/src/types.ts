@@ -105,6 +105,7 @@ export type ChatEventName =
   | 'tool_call'
   | 'confirm_req'
   | 'tool_result'
+  | 'status'
   | 'title'
   | 'error'
   | 'done';
@@ -119,4 +120,5 @@ export interface ConfirmReq {
   request_id: string;
   tool: string;
   input: any;
+  match_key_hint?: string;
 }

@@ -157,6 +157,27 @@ func TestChatConfirmFlow(t *testing.T) {
 	if !sawDone {
 		t.Error("missing done event")
 	}
+
+	msgs, err := db.ListMessages("sess_1")
+	if err != nil {
+		t.Fatalf("list messages: %v", err)
+	}
+	var sawPersistedAssistantToolCall bool
+	var sawPersistedToolResult bool
+	for _, m := range msgs {
+		if m.Role == "assistant" && strings.Contains(m.ToolCalls, `"id":"call_1"`) {
+			sawPersistedAssistantToolCall = true
+		}
+		if m.Role == "tool" && m.ToolCallID == "call_1" && strings.Contains(m.Content, "hi") {
+			sawPersistedToolResult = true
+		}
+	}
+	if !sawPersistedAssistantToolCall {
+		t.Fatalf("assistant tool_calls not persisted in messages: %+v", msgs)
+	}
+	if !sawPersistedToolResult {
+		t.Fatalf("tool result not persisted in messages: %+v", msgs)
+	}
 }
 
 // extractJSON pulls a simple "key":"value" string field out of a JSON line.

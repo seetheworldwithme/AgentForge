@@ -98,6 +98,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           request_id: e.data.request_id ?? e.data.id,
           tool: e.data.tool,
           input: e.data.input,
+          match_key_hint: e.data.match_key_hint,
         });
         return;
       }
@@ -174,6 +175,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             id: 'asst-' + e.data.call_id + '-' + Date.now(),
             session_id: id, role: 'assistant', content: '',
           });
+        } else if (e.event === 'status') {
+          // Keep the stream alive; backend logs carry the detailed retry state.
+          return st;
+        } else if (e.event === 'error') {
+          const text = e.data?.message ? `错误：${e.data.message}` : '错误：请求失败';
+          let found = false;
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'assistant') {
+              msgs[i] = { ...msgs[i], content: msgs[i].content ? msgs[i].content + '\n\n' + text : text };
+              found = true;
+              break;
+            }
+          }
+          if (!found) {
+            msgs.push({ id: 'err-' + Date.now(), session_id: id, role: 'assistant', content: text });
+          }
         }
         return { messages: msgs };
       });

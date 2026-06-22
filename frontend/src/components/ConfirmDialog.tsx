@@ -39,8 +39,9 @@ export function ConfirmDialog() {
           <button
             className="btn-outline gap-1.5"
             onClick={() => respond(req.request_id, 'allow', 'session')}
+            title={req.match_key_hint ? `本会话允许 ${req.match_key_hint}` : undefined}
           >
-            本会话允许
+            {req.match_key_hint ? `本会话允许 ${req.match_key_hint}` : '本会话允许'}
           </button>
           <button
             className="btn-primary gap-1.5"

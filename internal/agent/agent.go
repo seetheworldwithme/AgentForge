@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/tools"
@@ -45,6 +46,9 @@ type Agent struct {
 func New(deps Deps) *Agent {
 	if deps.MaxIter <= 0 {
 		deps.MaxIter = 20
+	}
+	if deps.LLMRetryWait <= 0 {
+		deps.LLMRetryWait = 30 * time.Second
 	}
 	return &Agent{deps: deps}
 }
@@ -99,7 +103,25 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		}
 	}
 
-	for iter := 0; iter < a.deps.MaxIter; iter++ {
+	for iter := 0; iter <= a.deps.MaxIter; iter++ {
+		finalizingAfterMaxTools := iter == a.deps.MaxIter
+		activeToolSpecs := toolSpecs
+		if finalizingAfterMaxTools {
+			if !lastMessageIsTool(history) {
+				break
+			}
+			log.Printf("[Agent] max tool iterations reached (%d); requesting final answer without tools", a.deps.MaxIter)
+			in.Emit.Emit("status", map[string]any{
+				"kind":    "tool_budget_exhausted",
+				"message": "工具调用次数已达到上限，正在基于已有工具结果生成最终答复。",
+			})
+			history = append(history, llm.Message{
+				Role:    llm.RoleUser,
+				Content: maxIterationsFinalAnswerPrompt(),
+			})
+			activeToolSpecs = nil
+		}
+
 		// Optionally inject RAG context before the model turn. Low-similarity
 		// chunks are filtered out; if none clear the threshold, nothing is
 		// injected so the model answers from its own knowledge.
@@ -119,22 +141,28 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			}
 		}
 
-		stream, err := a.deps.LLM.ChatStream(ctx, history, toolSpecs)
-		if err != nil {
-			log.Printf("[Agent] llm error at iter=%d: %v", iter, err)
-			in.Emit.Emit("error", map[string]any{"message": err.Error()})
+		stream, streamStart, ok := a.openChatStreamWithRecovery(ctx, in.Emit, iter, history, activeToolSpecs)
+		if !ok {
 			return
 		}
 
 		var assistantText strings.Builder
 		var toolCalls []llm.ToolCall
 		var usage *llm.Usage
+		chunks := 0
+		sawDone := false
 		for chunk := range stream {
+			chunks++
 			if chunk.Text != "" {
 				assistantText.WriteString(chunk.Text)
 				in.Emit.Emit("delta", map[string]any{"text": chunk.Text})
 			}
 			if chunk.ToolCall != nil {
+				if finalizingAfterMaxTools {
+					log.Printf("[Agent] ignored tool call during final answer after max iterations: id=%s name=%s",
+						chunk.ToolCall.ID, chunk.ToolCall.Name)
+					continue
+				}
 				toolCalls = append(toolCalls, *chunk.ToolCall)
 				in.Emit.Emit("tool_call", map[string]any{
 					"call_id": chunk.ToolCall.ID,
@@ -146,34 +174,85 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				usage = chunk.Usage
 			}
 			if chunk.Done {
+				sawDone = true
 				break
 			}
 		}
 
-		// record assistant turn
-		history = append(history, llm.Message{
-			Role: llm.RoleAssistant, Content: assistantText.String(), ToolCalls: toolCalls,
-		})
-		log.Printf("[Agent] iter=%d text_len=%d tool_calls=%d", iter, assistantText.Len(), len(toolCalls))
+		log.Printf("[Agent] iter=%d llm_done duration=%s chunks=%d saw_done=%t text_len=%d tool_calls=%d usage=%+v",
+			iter, time.Since(streamStart).Round(time.Millisecond), chunks, sawDone, assistantText.Len(), len(toolCalls), usage)
+
+		if !sawDone {
+			if ctx.Err() != nil {
+				log.Printf("[Agent] incomplete stream at iter=%d due to context error: %v", iter, ctx.Err())
+				in.Emit.Emit("error", map[string]any{"message": "任务超时或被取消：" + ctx.Err().Error()})
+				return
+			}
+			if finalizingAfterMaxTools {
+				log.Printf("[Agent] final answer stream incomplete after max iterations; preview=%q", truncate(assistantText.String(), 200))
+				in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
+				return
+			}
+			log.Printf("[Agent] incomplete stream at iter=%d; continuing original task, preview=%q", iter, truncate(assistantText.String(), 200))
+			in.Emit.Emit("status", map[string]any{
+				"kind":    "llm_incomplete_stream",
+				"message": "模型响应流未完整结束，正在继续原任务。",
+			})
+			if len(toolCalls) == 0 {
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: incompleteStreamContinuationPrompt(),
+				})
+				continue
+			}
+		}
 
 		if len(toolCalls) == 0 {
+			if strings.TrimSpace(assistantText.String()) == "" {
+				if finalizingAfterMaxTools {
+					log.Printf("[Agent] blank final answer after max iterations")
+					in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
+					return
+				}
+				log.Printf("[Agent] blank assistant turn at iter=%d; continuing original task", iter)
+				history = append(history, llm.Message{
+					Role:    llm.RoleUser,
+					Content: blankAssistantContinuationPrompt(),
+				})
+				continue
+			}
+			history = append(history, llm.Message{
+				Role: llm.RoleAssistant, Content: assistantText.String(),
+			})
 			// pure text answer; terminate. 记录预览，便于诊断“为什么停在这一轮”
 			log.Printf("[Agent] stop: no tool call at iter=%d, preview=%q", iter, truncate(assistantText.String(), 200))
 			in.Emit.Emit("done", map[string]any{"usage": usage})
 			return
 		}
 
+		// record assistant tool-call turn before feeding tool results back.
+		history = append(history, llm.Message{
+			Role: llm.RoleAssistant, Content: assistantText.String(), ToolCalls: toolCalls,
+		})
+
 		// execute each tool, feed result back
-		for _, tc := range toolCalls {
+		for i, tc := range toolCalls {
+			toolStart := time.Now()
+			log.Printf("[Agent] tool_start iter=%d index=%d id=%s name=%s args=%q",
+				iter, i, tc.ID, tc.Name, truncate(tc.Args, 240))
 			result := tools.Result{Content: "no tools available", IsError: true}
+			var execErr error
 			if a.deps.Tools != nil {
 				r, err := a.deps.Tools.Execute(ctx, tc.Name, tc.Args)
 				if err != nil {
+					execErr = err
 					result = tools.Result{Content: err.Error(), IsError: true}
 				} else {
 					result = r
 				}
 			}
+			log.Printf("[Agent] tool_done iter=%d index=%d id=%s name=%s duration=%s is_error=%t content_len=%d exec_err=%v",
+				iter, i, tc.ID, tc.Name, time.Since(toolStart).Round(time.Millisecond), result.IsError, len(result.Content), execErr)
 			in.Emit.Emit("tool_result", map[string]any{
 				"call_id": tc.ID, "content": result.Content, "is_error": result.IsError,
 			})
@@ -186,6 +265,69 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 	// hit max iterations
 	log.Printf("[Agent] stop: reached max iterations (%d)", a.deps.MaxIter)
 	in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
+}
+
+func (a *Agent) openChatStreamWithRecovery(ctx context.Context, emit EventEmitter, iter int, history []llm.Message, toolSpecs []llm.ToolSpec) (<-chan llm.Chunk, time.Time, bool) {
+	attempt := 0
+	for {
+		attempt++
+		log.Printf("[Agent] iter=%d llm_start attempt=%d history=%d tools=%d last_user=%q",
+			iter, attempt, len(history), len(toolSpecs), truncate(lastUserText(history), 160))
+		streamStart := time.Now()
+		stream, err := a.deps.LLM.ChatStream(ctx, history, toolSpecs)
+		if err == nil {
+			return stream, streamStart, true
+		}
+		if !isRecoverableLLMError(err) {
+			log.Printf("[Agent] llm error at iter=%d attempt=%d: %v", iter, attempt, err)
+			emit.Emit("error", map[string]any{"message": err.Error()})
+			return nil, time.Time{}, false
+		}
+		wait := a.deps.LLMRetryWait
+		log.Printf("[Agent] llm recoverable error at iter=%d attempt=%d; retrying in %s: %v",
+			iter, attempt, wait, err)
+		emit.Emit("status", map[string]any{
+			"kind":    "llm_retry",
+			"message": "模型触发限流，正在等待后自动重试。",
+			"attempt": attempt,
+			"wait_ms": wait.Milliseconds(),
+			"error":   err.Error(),
+		})
+		select {
+		case <-time.After(wait):
+		case <-ctx.Done():
+			log.Printf("[Agent] llm retry canceled at iter=%d attempt=%d: %v", iter, attempt, ctx.Err())
+			emit.Emit("error", map[string]any{"message": ctx.Err().Error()})
+			return nil, time.Time{}, false
+		}
+	}
+}
+
+func isRecoverableLLMError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "429") ||
+		strings.Contains(msg, "rate limit") ||
+		strings.Contains(msg, "rate limiting") ||
+		strings.Contains(msg, "TPM limit")
+}
+
+func blankAssistantContinuationPrompt() string {
+	return "上一轮助手没有给出有效内容。请继续完成用户的原始任务：如果还需要数据或文件，请继续调用工具；只有在任务真正完成并给出明确结果后，才输出最终答复。"
+}
+
+func incompleteStreamContinuationPrompt() string {
+	return "上一轮模型响应流没有完整结束，不能把其中的中间说明当成最终结果。请继续完成用户的原始任务；如果刚才只是说“将要撰写/将要生成”，现在必须继续调用工具或直接生成完整交付物。"
+}
+
+func maxIterationsFinalAnswerPrompt() string {
+	return "工具调用次数已经达到本轮安全上限。不要再调用任何工具；请只基于目前已有的工具结果和对话上下文，给出尽可能完整、明确的最终答复。如果仍有缺口，请在最终答复中说明缺少什么信息。"
+}
+
+func lastMessageIsTool(history []llm.Message) bool {
+	return len(history) > 0 && history[len(history)-1].Role == llm.RoleTool
 }
 
 func lastUserText(history []llm.Message) string {

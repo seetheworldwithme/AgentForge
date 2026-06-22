@@ -3,11 +3,14 @@ import { useSessionStore } from '../stores/sessionStore';
 import { MessageBubble, Avatar } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { Icon } from './Icon';
+import { useConfirmStore } from '../stores/confirmStore';
 
 export function ChatView() {
   const currentId = useSessionStore((s) => s.currentId);
   const messages = useSessionStore((s) => s.messages);
   const streaming = useSessionStore((s) => s.streaming);
+  const pendingConfirm = useConfirmStore((s) => s.pending[0]);
+  const respondConfirm = useConfirmStore((s) => s.respond);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -36,6 +39,41 @@ export function ChatView() {
           </div>
         )}
       </div>
+      {pendingConfirm && (
+        <div className="border-t border-border bg-card/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
+          <div className="mx-auto flex max-w-3xl flex-col gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="font-medium text-foreground">等待确认工具执行</div>
+              <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-5 text-muted-foreground">
+                {pendingConfirm.tool} {JSON.stringify(pendingConfirm.input)}
+              </pre>
+            </div>
+            <div className="flex shrink-0 items-center justify-end gap-2">
+              <button
+                className="btn-outline gap-1.5 text-muted-foreground"
+                onClick={() => respondConfirm(pendingConfirm.request_id, 'deny', 'never')}
+              >
+                <Icon name="x" size={15} />
+                拒绝
+              </button>
+              <button
+                className="btn-outline gap-1.5"
+                onClick={() => respondConfirm(pendingConfirm.request_id, 'allow', 'session')}
+                title={pendingConfirm.match_key_hint ? `本会话允许 ${pendingConfirm.match_key_hint}` : undefined}
+              >
+                {pendingConfirm.match_key_hint ? `允许 ${pendingConfirm.match_key_hint}` : '本会话允许'}
+              </button>
+              <button
+                className="btn-primary gap-1.5"
+                onClick={() => respondConfirm(pendingConfirm.request_id, 'allow', 'never')}
+              >
+                <Icon name="check" size={15} strokeWidth={2.5} />
+                仅本次允许
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <ChatInput sessionId={currentId} />
     </div>
   );

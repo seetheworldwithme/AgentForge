@@ -65,6 +65,8 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		}
 		prov = override
 	}
+	log.Printf("[Chat] start session=%s provider=%s tools_enabled_req=%v use_rag_req=%v msg_len=%d",
+		id, prov.ID, boolPtrForLog(req.ToolsEnabled), boolPtrForLog(req.UseRAG), len(req.Message))
 
 	// open SSE stream
 	sse, ok := NewSSEWriter(w)
@@ -82,11 +84,15 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// process-wide singleton; only one chat is active at a time.)
 	if h.Gate != nil {
 		h.Gate.SetEmitter(func(req tools.ConfirmRequest) {
+			log.Printf("[Chat] confirm_emit session=%s request_id=%s tool=%s args=%q",
+				id, req.ID, req.Tool, truncateForLog(req.Args, 240))
 			sse.Emit("confirm_req", map[string]any{
-				"request_id": req.ID,
-				"tool":       req.Tool,
-				"input":      map[string]any{"raw": req.Args},
+				"request_id":     req.ID,
+				"tool":           req.Tool,
+				"input":          map[string]any{"raw": req.Args},
+				"match_key_hint": req.MatchKeyHint,
 			})
+			log.Printf("[Chat] confirm_emitted session=%s request_id=%s tool=%s", id, req.ID, req.Tool)
 		})
 		defer h.Gate.SetEmitter(func(tools.ConfirmRequest) {})
 	}
@@ -111,7 +117,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// persist user message
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	userMsgID := "msg_" + ulid.Make().String()
 	_ = h.DB.AppendMessage(store.Message{
 		ID: userMsgID, SessionID: id, Role: "user", Content: req.Message, CreatedAt: now,
@@ -133,7 +139,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	a := agent.New(agent.Deps{
 		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, Skills: h.Skills, MaxIter: 20,
 	})
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()
 
 	// Generate the title concurrently with the reply using a SEPARATE provider
@@ -157,6 +163,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		log.Printf("title-gen: session %s skipped (msgLen=%d)", id, len(req.Message))
 	}
 
+	runStart := time.Now()
 	a.Run(ctx, agent.RunInput{
 		History:      history,
 		Emit:         emit,
@@ -165,17 +172,19 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		KBID:         sess.KBID,
 		UserMessage:  req.Message,
 	})
+	log.Printf("[Chat] agent_return session=%s duration=%s", id, time.Since(runStart).Round(time.Millisecond))
 
-	// persist assistant message
-	asstID := "msg_" + ulid.Make().String()
-	_ = h.DB.AppendMessage(store.Message{
-		ID: asstID, SessionID: id, Role: "assistant",
-		Content: collected.text, ToolCalls: collected.toolCallsJSON(), CreatedAt: now,
-	})
+	persisted := 0
+	for _, msg := range collected.finish() {
+		_ = h.DB.AppendMessage(llmMsgToStore(id, msg))
+		persisted++
+	}
+	log.Printf("[Chat] persisted_assistant_turns session=%s count=%d", id, persisted)
 
 	// Wait for the concurrent title generation to settle (LLM or fallback)
 	// before the stream closes, so the client always receives a title event.
 	titleWg.Wait()
+	log.Printf("[Chat] done session=%s", id)
 }
 
 func prependSystemMessage(history []llm.Message, content string) []llm.Message {
@@ -186,6 +195,24 @@ func prependSystemMessage(history []llm.Message, content string) []llm.Message {
 		return out
 	}
 	return append([]llm.Message{system}, history...)
+}
+
+func boolPtrForLog(v *bool) string {
+	if v == nil {
+		return "<nil>"
+	}
+	if *v {
+		return "true"
+	}
+	return "false"
+}
+
+func truncateForLog(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
 }
 
 // titleClient returns the provider dedicated to title generation, falling back
@@ -295,18 +322,41 @@ func storeMsgToLLM(m store.Message) llm.Message {
 }
 
 type streamCollector struct {
-	text      string
-	toolCalls []llm.ToolCall
+	pendingText      strings.Builder
+	pendingToolCalls []llm.ToolCall
+	messages         []llm.Message
 }
 
-func (c *streamCollector) appendText(s string) { c.text += s }
+func (c *streamCollector) appendText(s string) {
+	c.pendingText.WriteString(s)
+}
 
-func (c *streamCollector) toolCallsJSON() string {
-	if len(c.toolCalls) == 0 {
-		return ""
+func (c *streamCollector) appendToolCall(tc llm.ToolCall) {
+	c.pendingToolCalls = append(c.pendingToolCalls, tc)
+}
+
+func (c *streamCollector) appendToolResult(callID, content string) {
+	c.flushAssistantTurn()
+	c.messages = append(c.messages, llm.Message{
+		Role: llm.RoleTool, Content: content, ToolCallID: callID,
+	})
+}
+
+func (c *streamCollector) finish() []llm.Message {
+	c.flushAssistantTurn()
+	return append([]llm.Message(nil), c.messages...)
+}
+
+func (c *streamCollector) flushAssistantTurn() {
+	if c.pendingText.Len() == 0 && len(c.pendingToolCalls) == 0 {
+		return
 	}
-	b, _ := json.Marshal(c.toolCalls)
-	return string(b)
+	c.messages = append(c.messages, llm.Message{
+		Role: llm.RoleAssistant, Content: c.pendingText.String(),
+		ToolCalls: append([]llm.ToolCall(nil), c.pendingToolCalls...),
+	})
+	c.pendingText.Reset()
+	c.pendingToolCalls = nil
 }
 
 // multiEmitter forwards events to the SSE client AND collects assistant output.
@@ -316,12 +366,67 @@ type multiEmitter struct {
 }
 
 func (m *multiEmitter) Emit(event string, data any) {
-	if event == "delta" {
+	switch event {
+	case "delta":
 		if d, ok := data.(map[string]any); ok {
 			if t, ok := d["text"].(string); ok {
 				m.collector.appendText(t)
 			}
 		}
+	case "tool_call":
+		if tc, ok := toolCallFromEvent(data); ok {
+			m.collector.appendToolCall(tc)
+		}
+	case "tool_result":
+		if callID, content, ok := toolResultFromEvent(data); ok {
+			m.collector.appendToolResult(callID, content)
+		}
 	}
 	m.sse.Emit(event, data)
+}
+
+func toolCallFromEvent(data any) (llm.ToolCall, bool) {
+	d, ok := data.(map[string]any)
+	if !ok {
+		return llm.ToolCall{}, false
+	}
+	id, _ := d["call_id"].(string)
+	name, _ := d["tool"].(string)
+	input, _ := d["input"].(map[string]any)
+	args, _ := input["raw"].(string)
+	if id == "" || name == "" {
+		return llm.ToolCall{}, false
+	}
+	return llm.ToolCall{ID: id, Name: name, Args: args}, true
+}
+
+func toolResultFromEvent(data any) (string, string, bool) {
+	d, ok := data.(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	callID, _ := d["call_id"].(string)
+	content, _ := d["content"].(string)
+	if callID == "" {
+		return "", "", false
+	}
+	return callID, content, true
+}
+
+func llmMsgToStore(sessionID string, msg llm.Message) store.Message {
+	toolCalls := ""
+	if len(msg.ToolCalls) > 0 {
+		if b, err := json.Marshal(msg.ToolCalls); err == nil {
+			toolCalls = string(b)
+		}
+	}
+	return store.Message{
+		ID:         "msg_" + ulid.Make().String(),
+		SessionID:  sessionID,
+		Role:       string(msg.Role),
+		Content:    msg.Content,
+		ToolCalls:  toolCalls,
+		ToolCallID: msg.ToolCallID,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+	}
 }

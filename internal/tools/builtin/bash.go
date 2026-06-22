@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -39,9 +41,14 @@ func (b Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (t
 		return tools.Result{Content: "bad args: " + err.Error(), IsError: true}, nil
 	}
 
+	log.Printf("[Bash] request command=%q timeout=%d", previewCommand(p.Command, 240), p.Timeout)
 	// dangerous: require confirmation
-	d := gate.Request(ctx, tools.ConfirmRequest{ID: newID(), Tool: "bash", Args: args})
+	matchKey, matchHint := bashRememberMatch(p.Command)
+	d := gate.Request(ctx, tools.ConfirmRequest{
+		ID: newID(), Tool: "bash", Args: args, MatchKey: matchKey, MatchKeyHint: matchHint,
+	})
 	if !d.Allow {
+		log.Printf("[Bash] denied command=%q", previewCommand(p.Command, 240))
 		return tools.Result{Content: "user denied bash command", IsError: true}, nil
 	}
 
@@ -59,15 +66,20 @@ func (b Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (t
 		cmd = exec.CommandContext(ctx, "sh", "-c", p.Command)
 	}
 	// Run in the user-selected working directory if one is set.
+	workdir := ""
 	if b.WorkDir != nil {
 		if dir := b.WorkDir.Get(); dir != "" {
 			cmd.Dir = dir
+			workdir = dir
 		}
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	start := time.Now()
+	log.Printf("[Bash] start command=%q dir=%q timeout=%s", previewCommand(p.Command, 240), workdir, timeout)
 	err := cmd.Run()
+	duration := time.Since(start).Round(time.Millisecond)
 	out := stdout.String()
 	// On Windows, cmd.exe outputs in the system OEM code page (e.g. GBK/CP936
 	// on Chinese Windows). Convert to UTF-8 when the raw bytes aren't valid UTF-8.
@@ -82,9 +94,13 @@ func (b Bash) Run(ctx context.Context, args string, gate tools.GateInterface) (t
 		out += "\n[stderr]\n" + errStr
 	}
 	if err != nil {
+		log.Printf("[Bash] done command=%q duration=%s stdout_bytes=%d stderr_bytes=%d err=%v ctx_err=%v",
+			previewCommand(p.Command, 240), duration, stdout.Len(), stderr.Len(), err, ctx.Err())
 		out += fmt.Sprintf("\n[error] %v", err)
 		return tools.Result{Content: out, IsError: true}, nil
 	}
+	log.Printf("[Bash] done command=%q duration=%s stdout_bytes=%d stderr_bytes=%d err=<nil> ctx_err=%v",
+		previewCommand(p.Command, 240), duration, stdout.Len(), stderr.Len(), ctx.Err())
 	return tools.Result{Content: out}, nil
 }
 
@@ -100,4 +116,21 @@ func decodeWinOutput(s string) string {
 		return s
 	}
 	return string(result)
+}
+
+func previewCommand(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "..."
+}
+
+func bashRememberMatch(command string) (string, string) {
+	fields := strings.Fields(command)
+	if len(fields) < 2 {
+		return "", ""
+	}
+	family := fields[0] + " " + fields[1]
+	return "bash:" + family, family
 }

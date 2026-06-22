@@ -55,6 +55,79 @@ func TestGateContextCancel(t *testing.T) {
 	}
 }
 
+func TestGatePendingListsUnresolvedRequests(t *testing.T) {
+	g := NewGate()
+	g.SetEmitter(func(req ConfirmRequest) {})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan Decision, 1)
+	go func() {
+		done <- g.Request(ctx, ConfirmRequest{ID: "p1", Tool: "bash", Args: `{"command":"ls"}`})
+	}()
+
+	deadline := time.After(time.Second)
+	for {
+		pending := g.Pending()
+		if len(pending) == 1 {
+			if pending[0].ID != "p1" || pending[0].Tool != "bash" {
+				t.Fatalf("pending = %+v", pending)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("pending request never appeared: %+v", pending)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	if !g.Resolve("p1", Decision{Allow: true, Remember: RememberNever}) {
+		t.Fatal("resolve failed")
+	}
+	select {
+	case d := <-done:
+		if !d.Allow {
+			t.Fatal("request should be allowed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request did not resolve")
+	}
+	if pending := g.Pending(); len(pending) != 0 {
+		t.Fatalf("pending after resolve = %+v", pending)
+	}
+}
+
+func TestGateRememberMatchesCommandFamily(t *testing.T) {
+	g := NewGate()
+	g.SetEmitter(func(req ConfirmRequest) {
+		g.Resolve(req.ID, Decision{Allow: true, Remember: RememberSession})
+	})
+
+	first := ConfirmRequest{
+		ID: "q1", Tool: "bash", Args: `{"command":"excelcli query /tmp/a.db --sql SELECT 1"}`,
+		MatchKey: "bash:excelcli query",
+	}
+	if d := g.Request(context.Background(), first); !d.Allow {
+		t.Fatal("first request should be allowed")
+	}
+
+	called := false
+	g.SetEmitter(func(req ConfirmRequest) {
+		called = true
+	})
+	second := ConfirmRequest{
+		ID: "q2", Tool: "bash", Args: `{"command":"excelcli query /tmp/a.db --sql SELECT 2"}`,
+		MatchKey: "bash:excelcli query",
+	}
+	if d := g.Request(context.Background(), second); !d.Allow {
+		t.Fatal("second request should be allowed via remembered command family")
+	}
+	if called {
+		t.Fatal("emitter should not be called for remembered command family")
+	}
+}
+
 func TestGateRememberAllowsNextTime(t *testing.T) {
 	g := NewGate()
 	g.SetEmitter(func(req ConfirmRequest) {

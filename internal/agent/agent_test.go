@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -14,7 +15,9 @@ import (
 // fakeLLM scripts a sequence of streamed responses (one per turn).
 type fakeLLM struct {
 	scripts      [][]llm.Chunk
+	errors       []error
 	calls        int
+	scriptCalls  int
 	lastMessages []llm.Message
 }
 
@@ -24,7 +27,13 @@ func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) 
 
 func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.ToolSpec) (<-chan llm.Chunk, error) {
 	f.lastMessages = append([]llm.Message(nil), msgs...)
-	script := f.scripts[f.calls%len(f.scripts)]
+	if f.calls < len(f.errors) && f.errors[f.calls] != nil {
+		err := f.errors[f.calls]
+		f.calls++
+		return nil, err
+	}
+	script := f.scripts[f.scriptCalls%len(f.scripts)]
+	f.scriptCalls++
 	f.calls++
 	ch := make(chan llm.Chunk, len(script))
 	for _, c := range script {
@@ -120,6 +129,102 @@ func TestRunToolCallThenAnswer(t *testing.T) {
 	joined := join(rec.events)
 	if !contains(joined, "tool_call") || !contains(joined, "tool_result") || !contains(joined, "done") {
 		t.Errorf("event sequence unexpected: %v", rec.events)
+	}
+}
+
+func TestRunFinalizesAfterToolResultAtMaxIter(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"excelcli query"}`}}},
+		{{Text: "final answer from query result"}, {Done: true}},
+	}}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 1})
+
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "analyze transactions"}},
+		Emit:    rec,
+	})
+
+	if m.calls != 2 {
+		t.Fatalf("LLM calls = %d, want 2 so tool results are returned to the model; events=%v", m.calls, rec.events)
+	}
+	joined := join(rec.events)
+	if !contains(joined, "tool_call") || !contains(joined, "tool_result") || !contains(joined, "delta") || !contains(joined, "done") {
+		t.Fatalf("expected tool call, tool result, final answer delta, and done; got %v", rec.events)
+	}
+}
+
+func TestRunDoesNotStopOnBlankAnswerAfterToolResult(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"excelcli import"}`}}},
+		{{Text: "\n\n"}, {Done: true}},
+		{{Text: "analysis complete"}, {Done: true}},
+	}}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 5})
+
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "analyze anti-money case"}},
+		Emit:    rec,
+	})
+
+	if m.calls != 3 {
+		t.Fatalf("LLM calls = %d, want 3; events=%v", m.calls, rec.events)
+	}
+	joined := join(rec.events)
+	if !contains(joined, "tool_call") || !contains(joined, "tool_result") || !contains(joined, "done") {
+		t.Errorf("event sequence unexpected: %v", rec.events)
+	}
+}
+
+func TestRunRetriesRecoverableLLMErrorAfterToolResult(t *testing.T) {
+	m := &fakeLLM{
+		scripts: [][]llm.Chunk{
+			{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"ls"}`}}},
+			{{Text: "analysis complete"}, {Done: true}},
+		},
+		errors: []error{
+			nil,
+			errors.New(`after 3 retries: llm http 429: {"message":"TPM limit reached"}`),
+		},
+	}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 5, LLMRetryWait: time.Millisecond})
+
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "analyze anti-money case"}},
+		Emit:    rec,
+	})
+
+	if m.calls != 3 {
+		t.Fatalf("LLM calls = %d, want 3; events=%v", m.calls, rec.events)
+	}
+	joined := join(rec.events)
+	if !contains(joined, "status") || !contains(joined, "done") {
+		t.Fatalf("expected status retry and final done, got %v", rec.events)
+	}
+}
+
+func TestRunDoesNotTreatIncompleteTextStreamAsFinalAnswer(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{Text: "现在我将基于收集到的数据撰写反洗钱分析报告。"}},
+		{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"write report"}`}}},
+		{{Text: "report complete"}, {Done: true}},
+	}}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 5})
+
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "write the final markdown report"}},
+		Emit:    rec,
+	})
+
+	if m.calls != 3 {
+		t.Fatalf("LLM calls = %d, want 3; events=%v", m.calls, rec.events)
+	}
+	joined := join(rec.events)
+	if !contains(joined, "status") || !contains(joined, "tool_call") || !contains(joined, "done") {
+		t.Fatalf("expected incomplete-stream status, tool call, and final done; got %v", rec.events)
 	}
 }
 

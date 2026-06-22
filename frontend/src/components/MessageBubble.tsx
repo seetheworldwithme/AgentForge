@@ -40,6 +40,7 @@ export function MessageBubble({ m }: { m: Message }) {
   const hasResult = sepIdx >= 0;
   const callPart = hasResult ? content.slice(0, sepIdx) : content;
   const resultPart = hasResult ? content.slice(sepIdx + '\n─────────\n'.length) : '';
+  const collapsedCall = callPart.replace(/\s+/g, ' ').trim();
 
   if (isTool) {
     return (
@@ -47,30 +48,34 @@ export function MessageBubble({ m }: { m: Message }) {
         <div className="overflow-hidden rounded-xl border border-border bg-card text-sm shadow-sm">
           <button
             className="flex w-full items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
-            onClick={() => hasResult && setExpanded(!expanded)}
+            onClick={() => setExpanded(!expanded)}
           >
             <Icon name="wrench" size={14} className="mt-0.5 shrink-0 text-primary" />
-            <pre className="flex-1 whitespace-pre-wrap break-all font-mono text-xs leading-5 text-foreground/90">
-              {callPart}
+            <pre className="min-w-0 flex-1 truncate font-mono text-xs leading-5 text-foreground/90">
+              {collapsedCall}
             </pre>
-            {hasResult && (
-              <Icon
-                name="chevron-right"
-                size={14}
-                className={
-                  'mt-0.5 shrink-0 text-muted-foreground transition-transform duration-150 ' +
-                  (expanded ? 'rotate-90' : '')
-                }
-              />
-            )}
+            <Icon
+              name="chevron-right"
+              size={14}
+              className={
+                'mt-0.5 shrink-0 text-muted-foreground transition-transform duration-150 ' +
+                (expanded ? 'rotate-90' : '')
+              }
+            />
           </button>
-          {hasResult && expanded && (
+          {expanded && (
             <div className="border-t border-border bg-muted/40 px-3 py-2.5">
               <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-                结果{m.tool_call_id ? ` · #${m.tool_call_id}` : ''}
+                命令{m.tool_call_id ? ` · #${m.tool_call_id}` : ''}
+              </div>
+              <pre className="mb-3 max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-5 text-foreground/80">
+                {callPart}
+              </pre>
+              <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                结果
               </div>
               <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-xs leading-5 text-foreground/70">
-                {resultPart}
+                {hasResult ? resultPart : '等待结果...'}
               </pre>
             </div>
           )}
