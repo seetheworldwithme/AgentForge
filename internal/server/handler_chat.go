@@ -279,8 +279,18 @@ var trimCutset = "\"'`.,;:!?" +
 	"“”‘’"
 
 func storeMsgToLLM(m store.Message) llm.Message {
+	// 反序列化 assistant 的 tool_calls（存储为 JSON 字符串）。
+	// 之前这里漏掉了 ToolCalls，导致跨请求续聊时模型看不到自己上一轮调过
+	// 哪些工具，上下文断裂、多步任务容易卡住。
+	var toolCalls []llm.ToolCall
+	if s := strings.TrimSpace(m.ToolCalls); s != "" {
+		if err := json.Unmarshal([]byte(s), &toolCalls); err != nil {
+			log.Printf("[Chat] decode tool_calls failed (msg=%s): %v", m.ID, err)
+		}
+	}
 	return llm.Message{
-		Role: llm.Role(m.Role), Content: m.Content, ToolCallID: m.ToolCallID,
+		Role: llm.Role(m.Role), Content: m.Content,
+		ToolCalls: toolCalls, ToolCallID: m.ToolCallID,
 	}
 }
 
