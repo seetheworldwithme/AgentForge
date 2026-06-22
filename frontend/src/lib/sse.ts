@@ -8,12 +8,14 @@ export async function streamChat(
   message: string,
   opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string },
   onEvent: (e: ChatEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const b = await baseUrl();
   const r = await fetch(`${b}/api/sessions/${sessionId}/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, ...opts }),
+    signal,
   });
   if (!r.ok || !r.body) throw new Error(`chat ${r.status}`);
 

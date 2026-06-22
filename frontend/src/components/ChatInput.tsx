@@ -10,6 +10,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [useRag, setUseRag] = useState(false);
   const [kbId, setKbId] = useState('');
   const send = useSessionStore((s) => s.send);
+  const stopStreaming = useSessionStore((s) => s.stopStreaming);
   const streaming = useSessionStore((s) => s.streaming);
   const sessions = useSessionStore((s) => s.sessions);
 
@@ -59,6 +60,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   }, [sessionId, sessions]);
 
   const submit = () => {
+    if (streaming) {
+      stopStreaming();
+      return;
+    }
     if (!text.trim() || streaming) return;
     if (!sessionId && !providerId) return;
     send(text, {
@@ -172,7 +177,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                submit();
+                if (!streaming) submit();
               }
             }}
             placeholder={
@@ -180,12 +185,20 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             }
           />
           <button
-            className="grid h-9 w-9 shrink-0 place-items-center self-end rounded-xl bg-primary text-primary-foreground shadow-sm transition-all hover:bg-primary/90 active:scale-95 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none"
+            className={
+              'grid h-9 w-9 shrink-0 place-items-center self-end rounded-xl text-primary-foreground shadow-sm transition-all active:scale-95 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none ' +
+              (streaming ? 'bg-primary/90 hover:bg-primary' : 'bg-primary hover:bg-primary/90')
+            }
             onClick={submit}
-            disabled={!text.trim() || streaming || (!sessionId && !providerId)}
-            aria-label="发送"
+            disabled={!streaming && (!text.trim() || (!sessionId && !providerId))}
+            aria-label={streaming ? '停止回答' : '发送'}
+            title={streaming ? '停止回答' : '发送'}
           >
-            <Icon name="arrow-up" size={18} strokeWidth={2.25} />
+            {streaming ? (
+              <Icon name="square" size={16} strokeWidth={2.4} className="animate-pulse" />
+            ) : (
+              <Icon name="arrow-up" size={18} strokeWidth={2.25} />
+            )}
           </button>
         </div>
       </div>

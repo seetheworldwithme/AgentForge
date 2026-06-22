@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Icon } from './Icon';
+import { MarkdownMessage } from './MarkdownMessage';
 import type { Message } from '../types';
 
 // 角色 Avatar：用户=primary 圆头像，助手=描边卡片 + bot 图标。供消息气泡与输入指示器复用。
@@ -87,13 +88,13 @@ export function MessageBubble({ m }: { m: Message }) {
         </div>
         <div
           className={
-            'whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ' +
+            'break-words rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ' +
             (isUser
-              ? 'rounded-tr-sm bg-primary text-primary-foreground'
-              : 'rounded-tl-sm border border-border bg-card text-foreground')
+              ? 'whitespace-pre-wrap rounded-tr-sm bg-primary text-primary-foreground'
+              : 'markdown-body rounded-tl-sm border border-border bg-card text-foreground')
           }
         >
-          {content}
+          {isUser ? content : <MarkdownMessage content={content} />}
         </div>
       </div>
     </div>

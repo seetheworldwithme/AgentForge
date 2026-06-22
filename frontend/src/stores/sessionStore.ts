@@ -9,6 +9,7 @@ interface SessionState {
   currentId: string | null;
   messages: Message[];
   streaming: boolean;
+  abortController: AbortController | null;
   loadSessions: () => Promise<void>;
   select: (id: string) => Promise<void>;
   create: (s: Partial<Session>) => Promise<Session>;
@@ -16,6 +17,7 @@ interface SessionState {
   remove: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
   send: (text: string, opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string; kb_id?: string }) => Promise<void>;
+  stopStreaming: () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -23,6 +25,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   currentId: null,
   messages: [],
   streaming: false,
+  abortController: null,
 
   loadSessions: async () => set({ sessions: await api.listSessions() }),
 
@@ -79,7 +82,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         set({ sessions: get().sessions.map((s) => (s.id === id ? { ...s, ...updated } : s)) });
       }
     }
-    set({ streaming: true });
+    const abortController = new AbortController();
+    set({ streaming: true, abortController });
 
     // optimistic user + assistant message
     const now = Date.now();
@@ -176,9 +180,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     };
 
     try {
-      await streamChat(id, text, opts, handle);
+      await streamChat(id, text, opts, handle, abortController.signal);
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        throw e;
+      }
     } finally {
-      set({ streaming: false });
+      set({ streaming: false, abortController: null });
+    }
+  },
+
+  stopStreaming: () => {
+    const controller = get().abortController;
+    if (controller) {
+      controller.abort();
     }
   },
 }));

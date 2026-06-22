@@ -139,4 +139,82 @@
   .status-pill {
     @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium leading-none;
   }
+
+  .markdown-body {
+    @apply leading-6;
+  }
+  .markdown-body > *:first-child {
+    @apply mt-0;
+  }
+  .markdown-body > *:last-child {
+    @apply mb-0;
+  }
+  .markdown-body p {
+    @apply my-2;
+  }
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3 {
+    @apply mb-2 mt-4 font-semibold leading-snug text-foreground;
+  }
+  .markdown-body h1 {
+    @apply text-base;
+  }
+  .markdown-body h2,
+  .markdown-body h3 {
+    @apply text-sm;
+  }
+  .markdown-body ul,
+  .markdown-body ol {
+    @apply my-2 pl-5;
+  }
+  .markdown-body ul {
+    @apply list-disc;
+  }
+  .markdown-body ol {
+    @apply list-decimal;
+  }
+  .markdown-body li {
+    @apply my-1 pl-1;
+  }
+  .markdown-body li > p {
+    @apply my-1;
+  }
+  .markdown-body blockquote {
+    @apply my-2 border-l-2 border-primary/40 pl-3 text-muted-foreground;
+  }
+  .markdown-body a {
+    @apply text-primary underline decoration-primary/30 underline-offset-2 hover:decoration-primary;
+  }
+  .markdown-body code {
+    @apply rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground;
+  }
+  .markdown-body pre {
+    @apply my-3 max-w-full overflow-x-auto rounded-lg border border-border bg-muted p-3 text-xs leading-5;
+  }
+  .markdown-body pre code {
+    @apply bg-transparent p-0 text-xs;
+  }
+  .markdown-body hr {
+    @apply my-3 border-border;
+  }
+  .markdown-body .markdown-table-wrap {
+    @apply my-3 max-w-full overflow-x-auto rounded-lg border border-border;
+  }
+  .markdown-body table {
+    @apply w-full border-collapse text-xs;
+  }
+  .markdown-body th,
+  .markdown-body td {
+    @apply border-b border-r border-border px-2.5 py-2 text-left align-top last:border-r-0;
+  }
+  .markdown-body tr:last-child td {
+    @apply border-b-0;
+  }
+  .markdown-body th {
+    @apply bg-muted font-semibold text-foreground;
+  }
+  .markdown-body input[type='checkbox'] {
+    @apply mr-1.5 align-middle;
+  }
 }
