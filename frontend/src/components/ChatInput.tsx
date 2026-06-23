@@ -6,6 +6,7 @@ import { useKBStore } from '../stores/kbStore';
 import { api } from '../lib/api';
 import { Icon, type IconName } from './Icon';
 import { SlashMenu, type SlashMenuHandle } from './SlashMenu';
+import { FileMenu, type FileMenuHandle } from './FileMenu';
 import type { Skill, MCPServer } from '../types';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
@@ -20,10 +21,13 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [planMode, setPlanMode] = useState(false);
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
   const [mcpIDs, setMcpIDs] = useState<string[]>([]);
+  // @ 选中的文件/文件夹:{path,is_dir}。发送时只取 path 数组传给后端注入。
+  const [attachments, setAttachments] = useState<{ path: string; is_dir: boolean }[]>([]);
   // skills/mcp 列表：用于菜单展示与 chip 名称查找；菜单打开前即加载。
   const [skills, setSkills] = useState<Skill[] | null>(null);
   const [mcps, setMcps] = useState<MCPServer[] | null>(null);
   const menuRef = useRef<SlashMenuHandle>(null);
+  const fileMenuRef = useRef<FileMenuHandle>(null);
   const send = useSessionStore((s) => s.send);
   const stopStreaming = useSessionStore((s) => s.stopStreaming);
   const streaming = useSessionStore((s) => s.streaming);
@@ -93,6 +97,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     setPlanMode(false);
     setSkillIDs([]);
     setMcpIDs([]);
+    setAttachments([]);
   }, [sessionId]);
 
   // 读取工具调用上限与确认规则配置（齿轮按钮使用）
@@ -132,6 +137,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       plan_mode: planMode,
       skill_ids: skillIDs,
       mcp_server_ids: mcpIDs,
+      attachments: attachments.map((a) => a.path),
     });
     setText('');
   };
@@ -139,6 +145,9 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   // 斜杠菜单：仅当输入以 `/` 开头时打开，`/` 之后的内容作为过滤词。
   const slashOpen = text.startsWith('/');
   const slashQuery = text.slice(1);
+  // @ 文件菜单:仅当输入以 `@` 开头时打开,`@` 之后的内容作为过滤词。
+  const fileOpen = text.startsWith('@');
+  const fileQuery = text.slice(1);
 
   // 勾选回调：切换对应状态并清空触发文本（`/xxx`），菜单随之关闭；
   // 用户可再次输入 `/` 继续多选。
@@ -152,6 +161,11 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   };
   const toggleMCP = (id: string) => {
     setMcpIDs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setText('');
+  };
+  // @ 选中文件/文件夹:加入附件并清空触发文本(`@xxx`),菜单随之关闭;可再次输入 `@` 多选。
+  const selectFile = (path: string, is_dir: boolean) => {
+    setAttachments((cur) => (cur.some((a) => a.path === path) ? cur : [...cur, { path, is_dir }]));
     setText('');
   };
 
@@ -202,6 +216,16 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             onTogglePlan={togglePlan}
             onToggleSkill={toggleSkill}
             onToggleMCP={toggleMCP}
+            onClose={() => setText('')}
+          />
+        )}
+        {fileOpen && (
+          <FileMenu
+            ref={fileMenuRef}
+            query={fileQuery}
+            attachments={attachments.map((a) => a.path)}
+            workDir={workDir}
+            onSelect={selectFile}
             onClose={() => setText('')}
           />
         )}
@@ -277,8 +301,8 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           </div>
         </div>
 
-        {/* 已勾选的能力：计划模式 / Skills / MCP，点击 × 移除 */}
-        {(planMode || skillIDs.length > 0 || mcpIDs.length > 0) && (
+        {/* 已勾选的能力：计划模式 / Skills / MCP / 附件，点击 × 移除 */}
+        {(planMode || skillIDs.length > 0 || mcpIDs.length > 0 || attachments.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
             {planMode && <Chip icon="file-text" label="计划模式" onRemove={() => setPlanMode(false)} />}
             {skillIDs.map((id) => (
@@ -297,6 +321,14 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
                 onRemove={() => setMcpIDs((c) => c.filter((x) => x !== id))}
               />
             ))}
+            {attachments.map((a) => (
+              <Chip
+                key={a.path}
+                icon={a.is_dir ? 'folder' : 'file-text'}
+                label={a.path}
+                onRemove={() => setAttachments((c) => c.filter((x) => x.path !== a.path))}
+              />
+            ))}
           </div>
         )}
 
@@ -308,11 +340,22 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
-              // 菜单打开时拦截导航键，交给 SlashMenu 处理（不触发发送）。
+              // IME（中文输入法）组合期间的按键（如选词回车）交由输入法处理：
+              // 既不触发斜杠菜单选中，也不发送——否则打中文时按回车会在候选词上屏的
+              // 同时被误判为发送，把没打完的文字发出去。
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+              // 菜单打开时拦截导航键，交给对应菜单处理（不触发发送）。
               if (slashOpen) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape') {
                   e.preventDefault();
                   menuRef.current?.handleKey(e.key);
+                  return;
+                }
+              }
+              if (fileOpen) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+                  e.preventDefault();
+                  fileMenuRef.current?.handleKey(e.key);
                   return;
                 }
               }

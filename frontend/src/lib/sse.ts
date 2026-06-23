@@ -13,6 +13,7 @@ export async function streamChat(
     plan_mode?: boolean;
     skill_ids?: string[];
     mcp_server_ids?: string[];
+    attachments?: string[];
   },
   onEvent: (e: ChatEvent) => void,
   signal?: AbortSignal,

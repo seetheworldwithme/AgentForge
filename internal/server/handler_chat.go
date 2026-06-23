@@ -27,6 +27,7 @@ type ChatHandler struct {
 	RAG           agent.RAGRetriever  // optional; nil disables RAG
 	Skills        agent.SkillProvider // optional; nil disables skills
 	MCPConfigPath string
+	WorkDir       *tools.WorkDir // optional; nil disables @ file-attachment injection
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -41,6 +42,7 @@ type chatRequest struct {
 	PlanMode     *bool    `json:"plan_mode"`      // 本次会话临时开启「计划模式」（只读 + 产出计划）
 	SkillIDs     []string `json:"skill_ids"`      // 本次临时勾选的 skill id（替代全局 enabled）
 	MCPServerIDs []string `json:"mcp_server_ids"` // 本次临时限定只使用的 MCP server id
+	Attachments  []string `json:"attachments"`    // @ 选中的文件/文件夹相对路径(workdir 下)
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +123,16 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.MCPConfigPath != "" {
 		history = prependSystemMessage(history, "MCP server configuration is stored at "+h.MCPConfigPath+". When the user asks which MCP servers are configured, read that file directly instead of searching the filesystem.")
+	}
+
+	// 将 @ 选中的文件/文件夹注入到用户消息前部:文件读取内容(超限截断),
+	// 文件夹展开为目录树。随用户消息持久化,下一轮 history 自动带上。
+	if h.WorkDir != nil {
+		if wd := h.WorkDir.Get(); wd != "" {
+			if block := buildAttachments(wd, req.Attachments); block != "" {
+				req.Message = block + req.Message
+			}
+		}
 	}
 
 	// persist user message

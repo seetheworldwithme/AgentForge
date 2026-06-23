@@ -99,6 +99,13 @@ export interface MCPServer {
   enabled: boolean;
 }
 
+// 工作目录下的文件/文件夹项(@ 文件 mention 菜单使用)。
+export interface TreeItem {
+  name: string;
+  is_dir: boolean;
+  path: string; // 相对工作目录的路径
+}
+
 // Chat SSE event names emitted by the agent loop (internal/agent/agent.go).
 export type ChatEventName =
   | 'started'

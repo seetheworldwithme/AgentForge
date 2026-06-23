@@ -9,6 +9,7 @@ import type {
   RetrieveHit,
   Skill,
   MCPServer,
+  TreeItem,
 } from '../types';
 
 // All network I/O lives here. Components/stores never call fetch directly.
@@ -143,4 +144,10 @@ export const api = {
   getMCPConfig: () => jget<Record<string, any>>('/api/mcp/config'),
   saveMCPConfig: (config: Record<string, any>) => jput<Record<string, any>>('/api/mcp/config', config),
   getMCPConfigPath: () => jget<{ path: string }>('/api/mcp/config-path'),
+
+  // --- @ 文件 mention:列出工作目录下的文件/文件夹(path 省略=根) ---
+  listTree: (path?: string) =>
+    jget<{ items: TreeItem[] }>(
+      path ? `/api/workdir/tree?path=${encodeURIComponent(path)}` : '/api/workdir/tree',
+    ),
 };

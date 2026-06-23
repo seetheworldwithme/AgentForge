@@ -53,7 +53,7 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		(&ConfigHandler{DB: d.DB}).Routes(r)
 		(&SessionHandler{DB: d.DB, WorkDir: d.WorkDir}).Routes(r)
-		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath}).Routes(r)
+		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath, WorkDir: d.WorkDir}).Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
