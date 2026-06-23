@@ -125,7 +125,6 @@ export const api = {
   },
 
   // --- tool confirmation ---
-  listPendingTools: () => jget<{ pending: Array<{ request_id: string; tool: string; input: any; match_key_hint?: string }> }>('/api/tools/pending'),
   confirmTool: (request_id: string, decision: 'allow' | 'deny', remember: string) =>
     jpost('/api/tools/confirm', { request_id, decision, remember }),
 

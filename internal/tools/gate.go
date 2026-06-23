@@ -32,12 +32,11 @@ type Decision struct {
 // A tool calls Request() (which blocks); the HTTP layer calls Resolve()
 // when the UI posts the user's decision.
 type Gate struct {
-	mu          sync.Mutex
-	pending     map[string]chan Decision
-	pendingReqs map[string]ConfirmRequest
-	allow       []allowRule // session/always rules added by Resolve(remember)
-	emit        func(req ConfirmRequest)
-	autoAllow   bool // 自动放行模式：跳过所有确认（对应"自动"确认规则）
+	mu        sync.Mutex
+	pending   map[string]chan Decision
+	allow     []allowRule // session/always rules added by Resolve(remember)
+	emit      func(req ConfirmRequest)
+	autoAllow bool // 自动放行模式：跳过所有确认（对应"自动"确认规则）
 }
 
 type allowRule struct {
@@ -49,9 +48,8 @@ type allowRule struct {
 
 func NewGate() *Gate {
 	return &Gate{
-		pending:     map[string]chan Decision{},
-		pendingReqs: map[string]ConfirmRequest{},
-		emit:        func(ConfirmRequest) {}, // no-op default
+		pending: map[string]chan Decision{},
+		emit:    func(ConfirmRequest) {}, // no-op default
 	}
 }
 
@@ -111,7 +109,6 @@ func (g *Gate) Request(ctx context.Context, req ConfirmRequest) Decision {
 	ch := make(chan Decision, 1)
 	g.mu.Lock()
 	g.pending[req.ID] = ch
-	g.pendingReqs[req.ID] = req
 	emit := g.emit
 	g.mu.Unlock()
 
@@ -121,7 +118,6 @@ func (g *Gate) Request(ctx context.Context, req ConfirmRequest) Decision {
 	defer func() {
 		g.mu.Lock()
 		delete(g.pending, req.ID)
-		delete(g.pendingReqs, req.ID)
 		g.mu.Unlock()
 	}()
 
@@ -138,16 +134,6 @@ func (g *Gate) Request(ctx context.Context, req ConfirmRequest) Decision {
 			req.ID, req.Tool, time.Since(start).Round(time.Millisecond), ctx.Err())
 		return Decision{Allow: false, Remember: RememberNever}
 	}
-}
-
-func (g *Gate) Pending() []ConfirmRequest {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	out := make([]ConfirmRequest, 0, len(g.pendingReqs))
-	for _, req := range g.pendingReqs {
-		out = append(out, req)
-	}
-	return out
 }
 
 func (g *Gate) Resolve(id string, d Decision) bool {
