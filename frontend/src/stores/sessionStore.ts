@@ -16,7 +16,18 @@ interface SessionState {
   newChat: () => void;
   remove: (id: string) => Promise<void>;
   rename: (id: string, title: string) => Promise<void>;
-  send: (text: string, opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string; kb_id?: string }) => Promise<void>;
+  send: (
+    text: string,
+    opts: {
+      tools_enabled?: boolean;
+      use_rag?: boolean;
+      provider_id?: string;
+      kb_id?: string;
+      plan_mode?: boolean;
+      skill_ids?: string[];
+      mcp_server_ids?: string[];
+    },
+  ) => Promise<void>;
   stopStreaming: () => void;
 }
 

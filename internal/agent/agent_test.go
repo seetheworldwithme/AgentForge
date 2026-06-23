@@ -55,6 +55,8 @@ type staticSkills string
 
 func (s staticSkills) EnabledInstructions() (string, error) { return string(s), nil }
 
+func (s staticSkills) InstructionsFor(ids []string) (string, error) { return string(s), nil }
+
 // fakeToolEngine just echoes the tool name as the result.
 type fakeToolEngine struct{}
 

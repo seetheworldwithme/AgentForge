@@ -57,7 +57,8 @@ func main() {
 	)
 	mcpManager := mcp.NewManager(db)
 	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
-	engine := mcp.AttachToEngine(tools.NewEngine(registry, gate), mcpManager)
+	// 纯内置工具引擎；MCP 按请求在 ChatHandler 内 attach（支持临时限定 server）。
+	baseEngine := tools.NewEngine(registry, gate)
 
 	// Build an embed client + RAG retriever from the default provider, if any.
 	// These enable KB ingest and chat-time RAG; absent a configured provider
@@ -72,7 +73,7 @@ func main() {
 	}
 
 	router := server.NewRouter(server.Deps{
-		DB: db, Gate: gate, Engine: engine,
+		DB: db, Gate: gate, Engine: baseEngine,
 		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})

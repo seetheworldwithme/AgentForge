@@ -12,6 +12,7 @@ import (
 
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
+	"github.com/agent-rust/core/internal/mcp"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
 	"github.com/go-chi/chi/v5"
@@ -21,7 +22,8 @@ import (
 type ChatHandler struct {
 	DB            *store.DB
 	Gate          *tools.Gate // wires tool confirmations onto this chat's SSE stream
-	Engine        *tools.Engine
+	Engine        *tools.Engine     // 纯内置工具引擎（未 attach mcp）
+	MCP           *mcp.Manager      // 按请求 attach mcp；nil 则不挂载 MCP 工具
 	RAG           agent.RAGRetriever  // optional; nil disables RAG
 	Skills        agent.SkillProvider // optional; nil disables skills
 	MCPConfigPath string
@@ -32,10 +34,13 @@ func (h *ChatHandler) Routes(r chi.Router) {
 }
 
 type chatRequest struct {
-	Message      string  `json:"message"`
-	ToolsEnabled *bool   `json:"tools_enabled"`
-	UseRAG       *bool   `json:"use_rag"`
-	ProviderID   *string `json:"provider_id"` // optional override; falls back to session's provider
+	Message      string   `json:"message"`
+	ToolsEnabled *bool    `json:"tools_enabled"`
+	UseRAG       *bool    `json:"use_rag"`
+	ProviderID   *string  `json:"provider_id"`    // optional override; falls back to session's provider
+	PlanMode     *bool    `json:"plan_mode"`      // 本次会话临时开启「计划模式」（只读 + 产出计划）
+	SkillIDs     []string `json:"skill_ids"`      // 本次临时勾选的 skill id（替代全局 enabled）
+	MCPServerIDs []string `json:"mcp_server_ids"` // 本次临时限定只使用的 MCP server id
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -137,9 +142,16 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	if req.UseRAG != nil {
 		useRAG = *req.UseRAG
 	}
+	planMode := false
+	if req.PlanMode != nil {
+		planMode = *req.PlanMode
+	}
 
+	// 按请求构建工具引擎：把 MCP 挂到内置工具引擎之上。当请求指定了 mcp_server_ids
+	// 时只暴露这些 server 的工具（临时限定）；否则暴露全部已启用 MCP。
+	chatEngine := mcp.AttachToEngine(h.Engine, h.MCP, req.MCPServerIDs)
 	a := agent.New(agent.Deps{
-		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, Skills: h.Skills,
+		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills,
 		MaxToolCalls: toolLimitSetting(h.DB),
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
@@ -174,6 +186,8 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		UseRAG:       useRAG,
 		KBID:         sess.KBID,
 		UserMessage:  req.Message,
+		PlanMode:     planMode,
+		SkillIDs:     req.SkillIDs,
 	})
 	log.Printf("[Chat] agent_return session=%s duration=%s", id, time.Since(runStart).Round(time.Millisecond))
 

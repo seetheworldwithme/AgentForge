@@ -36,17 +36,20 @@ func (m *Manager) ConfigPath() string {
 	return m.configPath
 }
 
-func AttachToEngine(base *tools.Engine, manager *Manager) *tools.Engine {
+// AttachToEngine 把 MCP 工具挂载到内置工具引擎之上。allowed 为 nil/空时暴露所有
+// 已启用 server 的工具（默认行为）；非空时仅暴露这些 server（且 enabled）的工具，
+// 用于"本次会话临时只使用某些 MCP"的场景。
+func AttachToEngine(base *tools.Engine, manager *Manager, allowed []string) *tools.Engine {
 	if manager == nil {
 		return base
 	}
 	return tools.NewEngineFromFunc(func() []tools.Spec {
 		specs := append([]tools.Spec{}, base.List()...)
-		specs = append(specs, manager.ToolSpecs()...)
+		specs = append(specs, manager.ToolSpecsFor(allowed)...)
 		return specs
 	}, func(ctx context.Context, name, args string) (tools.Result, error) {
 		if IsToolName(name) {
-			return manager.Execute(ctx, name, args)
+			return manager.ExecuteFor(ctx, name, args, allowed)
 		}
 		return base.Execute(ctx, name, args)
 	})
@@ -141,14 +144,25 @@ func (m *Manager) writeServers(servers []ServerConfig) error {
 	return nil
 }
 
+// ToolSpecs 返回所有已启用 server 的工具描述（默认行为，等价于不限定）。
 func (m *Manager) ToolSpecs() []tools.Spec {
+	return m.ToolSpecsFor(nil)
+}
+
+// ToolSpecsFor 返回工具描述；allowed 为 nil/空时含全部已启用 server，非空时仅含
+// allowed 中且已启用的 server——用于按请求临时限定可用的 MCP 工具集。
+func (m *Manager) ToolSpecsFor(allowed []string) []tools.Spec {
 	servers, err := m.ListServers()
 	if err != nil {
 		return nil
 	}
+	allowedSet := toSet(allowed)
 	var out []tools.Spec
 	for _, server := range servers {
 		if !server.Enabled {
+			continue
+		}
+		if allowedSet != nil && !allowedSet[server.ID] {
 			continue
 		}
 		client := NewClient(server)
@@ -180,6 +194,12 @@ func defaultConfigPath() string {
 }
 
 func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result, error) {
+	return m.ExecuteFor(ctx, name, args, nil)
+}
+
+// ExecuteFor 执行指定 MCP 工具；allowed 语义与 ToolSpecsFor 一致，用于阻止调用
+// 未在本次会话暴露的工具（即便模型尝试调用也会被拒绝）。
+func (m *Manager) ExecuteFor(ctx context.Context, name, args string, allowed []string) (tools.Result, error) {
 	servers, err := m.ListServers()
 	if err != nil {
 		return tools.Result{Content: err.Error(), IsError: true}, nil
@@ -190,8 +210,12 @@ func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result,
 			return tools.Result{Content: "bad MCP args: " + err.Error(), IsError: true}, nil
 		}
 	}
+	allowedSet := toSet(allowed)
 	for _, server := range servers {
 		if !server.Enabled {
+			continue
+		}
+		if allowedSet != nil && !allowedSet[server.ID] {
 			continue
 		}
 		client := NewClient(server)
@@ -234,4 +258,17 @@ func sanitize(s string) string {
 		return "unnamed"
 	}
 	return b.String()
+}
+
+// toSet 把 id 切片转为集合；nil/空切片返回 nil，表示"不做过滤"（即全部放行），
+// 以此区分"未传 allowed"与"传入空集"。
+func toSet(ids []string) map[string]bool {
+	if len(ids) == 0 {
+		return nil
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out
 }

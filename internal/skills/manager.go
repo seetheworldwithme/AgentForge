@@ -127,14 +127,35 @@ func (m *Manager) SetEnabled(id string, enabled bool) error {
 	return m.db.SetSetting(disabledSettingKey, string(b))
 }
 
+// EnabledInstructions 返回所有已启用 skill 的指令。
 func (m *Manager) EnabledInstructions() (string, error) {
+	return m.instructionsFor(func(item Skill) bool { return item.Enabled })
+}
+
+// InstructionsFor 返回指定 id 列表的 skill 指令，忽略其 enabled 状态——用于本次
+// 会话临时勾选某些 skill（优先于全局 enabled）。为空时返回空串，调用方应回退到 EnabledInstructions。
+func (m *Manager) InstructionsFor(ids []string) (string, error) {
+	if len(ids) == 0 {
+		return "", nil
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return m.instructionsFor(func(item Skill) bool { return set[item.ID] })
+}
+
+// instructionsFor 按 keep 谓词筛选 skill，读取其 SKILL.md 并以统一的 XML
+// 格式拼装成系统提示词片段。EnabledInstructions 取 enabled 项；InstructionsFor
+// 取指定 id 项——二者仅筛选条件不同，拼装逻辑一致，避免重复。
+func (m *Manager) instructionsFor(keep func(Skill) bool) (string, error) {
 	items, err := m.List()
 	if err != nil {
 		return "", err
 	}
 	var sb strings.Builder
 	for _, item := range items {
-		if !item.Enabled {
+		if !keep(item) {
 			continue
 		}
 		b, err := os.ReadFile(item.Path)
@@ -178,15 +199,15 @@ type sourceRoot struct {
 }
 
 func (m *Manager) sources() []sourceRoot {
+	// 只区分两类来源：全局（home）与当前工作目录（workDir）。
+	// 项目根（启动目录）不再作为独立来源——它与「当前工作目录」语义重合，保留两者
+	// 只会让设置页出现「项目」「工作目录」两个等价分类，徒增困惑。
 	var out []sourceRoot
 	if m.globalRoot != "" {
 		out = append(out, sourceRoot{kind: SourceGlobal, root: m.globalRoot})
 	}
-	if m.projectRoot != "" {
-		out = append(out, sourceRoot{kind: SourceProject, root: m.projectRoot})
-	}
 	if m.workDir != nil {
-		if wd := m.workDir(); wd != "" && wd != m.projectRoot {
+		if wd := m.workDir(); wd != "" {
 			out = append(out, sourceRoot{kind: SourceWorkspace, root: wd})
 		}
 	}

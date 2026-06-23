@@ -6,7 +6,14 @@ import type { ChatEvent, ChatEventName } from '../types';
 export async function streamChat(
   sessionId: string,
   message: string,
-  opts: { tools_enabled?: boolean; use_rag?: boolean; provider_id?: string },
+  opts: {
+    tools_enabled?: boolean;
+    use_rag?: boolean;
+    provider_id?: string;
+    plan_mode?: boolean;
+    skill_ids?: string[];
+    mcp_server_ids?: string[];
+  },
   onEvent: (e: ChatEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {

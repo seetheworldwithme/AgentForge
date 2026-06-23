@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState, type SelectHTMLAttributes } from 'react';
+import { useEffect, useMemo, useRef, useState, type SelectHTMLAttributes } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
 import { useKBStore } from '../stores/kbStore';
 import { api } from '../lib/api';
 import { Icon, type IconName } from './Icon';
+import { SlashMenu, type SlashMenuHandle } from './SlashMenu';
+import type { Skill, MCPServer } from '../types';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [text, setText] = useState('');
@@ -13,6 +15,15 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [limitOpen, setLimitOpen] = useState(false);
   const [toolLimit, setToolLimit] = useState(50);
   const [confirmMode, setConfirmMode] = useState<'manual' | 'auto'>('manual');
+
+  // 斜杠菜单的临时勾选状态：仅本次会话生效，切换会话时重置（见下方 effect）。
+  const [planMode, setPlanMode] = useState(false);
+  const [skillIDs, setSkillIDs] = useState<string[]>([]);
+  const [mcpIDs, setMcpIDs] = useState<string[]>([]);
+  // skills/mcp 列表：用于菜单展示与 chip 名称查找；菜单打开前即加载。
+  const [skills, setSkills] = useState<Skill[] | null>(null);
+  const [mcps, setMcps] = useState<MCPServer[] | null>(null);
+  const menuRef = useRef<SlashMenuHandle>(null);
   const send = useSessionStore((s) => s.send);
   const stopStreaming = useSessionStore((s) => s.stopStreaming);
   const streaming = useSessionStore((s) => s.streaming);
@@ -57,6 +68,33 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     loadKBs();
   }, [loadKBs]);
 
+  // skills 随当前工作目录变化重新加载——工作目录决定 workspace 来源的 skills。
+  // 后端 WorkDir 启动时为空，首次加载通常只拿到 global；用户切换工作目录后必须
+  // 重新拉取，否则斜杠菜单会一直停留在初始的 global 列表（过滤后显示 0/N）。
+  useEffect(() => {
+    let alive = true;
+    api.listSkills().then((s) => alive && setSkills(s)).catch(() => alive && setSkills([]));
+    return () => {
+      alive = false;
+    };
+  }, [workDir]);
+
+  // mcp 列表与工作目录无关（配置在全局 ~/.agent/mcp.json），挂载时加载一次即可。
+  useEffect(() => {
+    let alive = true;
+    api.listMCPServers().then((m) => alive && setMcps(m)).catch(() => alive && setMcps([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 切换会话时清空临时勾选状态（实现「本次会话临时生效」语义）。
+  useEffect(() => {
+    setPlanMode(false);
+    setSkillIDs([]);
+    setMcpIDs([]);
+  }, [sessionId]);
+
   // 读取工具调用上限与确认规则配置（齿轮按钮使用）
   useEffect(() => {
     api.getToolLimit().then((r) => setToolLimit(r.limit)).catch(() => {});
@@ -91,9 +129,35 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       use_rag: !!kbId && useRag,
       provider_id: providerId || undefined,
       kb_id: kbId,
+      plan_mode: planMode,
+      skill_ids: skillIDs,
+      mcp_server_ids: mcpIDs,
     });
     setText('');
   };
+
+  // 斜杠菜单：仅当输入以 `/` 开头时打开，`/` 之后的内容作为过滤词。
+  const slashOpen = text.startsWith('/');
+  const slashQuery = text.slice(1);
+
+  // 勾选回调：切换对应状态并清空触发文本（`/xxx`），菜单随之关闭；
+  // 用户可再次输入 `/` 继续多选。
+  const togglePlan = () => {
+    setPlanMode((v) => !v);
+    setText('');
+  };
+  const toggleSkill = (id: string) => {
+    setSkillIDs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setText('');
+  };
+  const toggleMCP = (id: string) => {
+    setMcpIDs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
+    setText('');
+  };
+
+  // chip 名称：优先用已加载列表里的 name，回退到 id 片段。
+  const skillName = (id: string) => skills?.find((s) => s.id === id)?.name ?? id.split(':').pop() ?? id;
+  const mcpName = (id: string) => mcps?.find((m) => m.id === id)?.name ?? id;
 
   const ragOn = !!kbId && useRag;
 
@@ -125,7 +189,22 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className="rounded-2xl border border-border bg-card shadow-md transition-colors focus-within:border-primary/50">
+      <div className="relative rounded-2xl border border-border bg-card shadow-md transition-colors focus-within:border-primary/50">
+        {slashOpen && (
+          <SlashMenu
+            ref={menuRef}
+            query={slashQuery}
+            planMode={planMode}
+            skillIDs={skillIDs}
+            mcpIDs={mcpIDs}
+            skills={skills}
+            mcps={mcps}
+            onTogglePlan={togglePlan}
+            onToggleSkill={toggleSkill}
+            onToggleMCP={toggleMCP}
+            onClose={() => setText('')}
+          />
+        )}
         {/* 工具栏：知识库 / 检索 / 模型 / 工作目录 */}
         <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2.5">
           <IconSelect
@@ -198,6 +277,29 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           </div>
         </div>
 
+        {/* 已勾选的能力：计划模式 / Skills / MCP，点击 × 移除 */}
+        {(planMode || skillIDs.length > 0 || mcpIDs.length > 0) && (
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
+            {planMode && <Chip icon="file-text" label="计划模式" onRemove={() => setPlanMode(false)} />}
+            {skillIDs.map((id) => (
+              <Chip
+                key={id}
+                icon="sparkles"
+                label={skillName(id)}
+                onRemove={() => setSkillIDs((c) => c.filter((x) => x !== id))}
+              />
+            ))}
+            {mcpIDs.map((id) => (
+              <Chip
+                key={id}
+                icon="wrench"
+                label={mcpName(id)}
+                onRemove={() => setMcpIDs((c) => c.filter((x) => x !== id))}
+              />
+            ))}
+          </div>
+        )}
+
         {/* 输入行 */}
         <div className="flex items-end gap-2 px-2.5 pb-2.5 pt-1.5">
           <textarea
@@ -206,6 +308,14 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
+              // 菜单打开时拦截导航键，交给 SlashMenu 处理（不触发发送）。
+              if (slashOpen) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Escape') {
+                  e.preventDefault();
+                  menuRef.current?.handleKey(e.key);
+                  return;
+                }
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (!streaming) submit();
@@ -364,5 +474,23 @@ function IconSelect({
         className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground"
       />
     </div>
+  );
+}
+
+// 已勾选能力的标签：图标 + 名称 + 移除按钮。统一使用 Icon，禁用 emoji。
+function Chip({ icon, label, onRemove }: { icon: IconName; label: string; onRemove: () => void }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md border border-primary/30 bg-primary/10 px-2 py-1 text-xs text-primary">
+      <Icon name={icon} size={12} className="shrink-0" />
+      <span className="max-w-[160px] truncate">{label}</span>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="shrink-0 rounded-sm p-0.5 hover:bg-primary/20"
+        aria-label="移除"
+      >
+        <Icon name="x" size={12} />
+      </button>
+    </span>
   );
 }

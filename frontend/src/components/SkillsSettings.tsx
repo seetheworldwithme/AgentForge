@@ -5,7 +5,6 @@ import { Icon } from './Icon';
 
 const SOURCE_LABEL: Record<string, string> = {
   global: '全局',
-  project: '项目',
   workspace: '工作目录',
 };
 
@@ -27,7 +26,7 @@ export function SkillsSettings() {
   }, [skills]);
 
   const sourceOptions = useMemo(() => {
-    const order = ['all', 'global', 'project', 'workspace'];
+    const order = ['all', 'global', 'workspace'];
     const dynamic = Object.keys(sourceCounts).filter((source) => !order.includes(source));
     return [...order, ...dynamic].filter((source) => sourceCounts[source] > 0);
   }, [sourceCounts]);

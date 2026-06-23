@@ -19,6 +19,9 @@ type RAGRetriever interface {
 
 type SkillProvider interface {
 	EnabledInstructions() (string, error)
+	// InstructionsFor 返回指定 id 列表的 skill 指令（忽略 enabled），用于本次
+	// 会话临时勾选某些 skill；空列表返回空串，调用方应回退到 EnabledInstructions。
+	InstructionsFor(ids []string) (string, error)
 }
 
 type RetrievedChunk struct {
