@@ -32,6 +32,7 @@ export function Avatar({
 export function MessageBubble({ m }: { m: Message }) {
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
+  const isWarning = m.variant === 'warning';
   const [expanded, setExpanded] = useState(false);
   const content = m.role === 'assistant' ? m.content.trimStart() : m.content;
 
@@ -79,6 +80,18 @@ export function MessageBubble({ m }: { m: Message }) {
               </pre>
             </div>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // 居中警告提示（如工具调用上限）：区别于普通对话气泡，用 amber 描边 + 图标。
+  if (isWarning) {
+    return (
+      <div className="my-2.5 flex justify-center">
+        <div className="flex max-w-[90%] items-start gap-2 rounded-xl border border-amber-400/50 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-700 dark:text-amber-300">
+          <Icon name="alert-circle" size={16} className="mt-0.5 shrink-0" />
+          <span className="leading-6">{m.content}</span>
         </div>
       </div>
     );

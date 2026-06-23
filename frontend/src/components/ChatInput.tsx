@@ -3,12 +3,16 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
 import { useKBStore } from '../stores/kbStore';
+import { api } from '../lib/api';
 import { Icon, type IconName } from './Icon';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [text, setText] = useState('');
   const [useRag, setUseRag] = useState(false);
   const [kbId, setKbId] = useState('');
+  const [limitOpen, setLimitOpen] = useState(false);
+  const [toolLimit, setToolLimit] = useState(50);
+  const [confirmMode, setConfirmMode] = useState<'manual' | 'auto'>('manual');
   const send = useSessionStore((s) => s.send);
   const stopStreaming = useSessionStore((s) => s.stopStreaming);
   const streaming = useSessionStore((s) => s.streaming);
@@ -52,6 +56,22 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   useEffect(() => {
     loadKBs();
   }, [loadKBs]);
+
+  // 读取工具调用上限与确认规则配置（齿轮按钮使用）
+  useEffect(() => {
+    api.getToolLimit().then((r) => setToolLimit(r.limit)).catch(() => {});
+    api.getConfirmMode().then((r) => setConfirmMode(r.mode === 'auto' ? 'auto' : 'manual')).catch(() => {});
+  }, []);
+
+  const saveConfig = async (n: number, mode: 'manual' | 'auto') => {
+    try {
+      await Promise.all([api.setToolLimit(n), api.setConfirmMode(mode)]);
+      setToolLimit(n);
+      setConfirmMode(mode);
+    } catch {
+      /* 保存失败，忽略 */
+    }
+  };
 
   useEffect(() => {
     const session = sessions.find((s) => s.id === sessionId);
@@ -155,16 +175,27 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             ))}
           </IconSelect>
 
-          {/* 选择工作目录 */}
-          <button
-            type="button"
-            className="ml-auto inline-flex max-w-[220px] items-center gap-1.5 rounded-md border border-transparent bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-            onClick={pickDirectory}
-            title={workDir || '选择工作目录'}
-          >
-            <Icon name="folder" size={13} className="shrink-0 text-primary" />
-            <span className="truncate">{workDir ? workDir.split(/[\\/]/).pop() : '工作目录'}</span>
-          </button>
+          {/* 右侧：工具上限配置 + 工作目录 */}
+          <div className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 rounded-md border border-transparent bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => setLimitOpen(true)}
+              title="工具配置"
+            >
+              <Icon name="settings" size={13} className="shrink-0" />
+              <span>配置</span>
+            </button>
+            <button
+              type="button"
+              className="inline-flex max-w-[200px] items-center gap-1.5 rounded-md border border-transparent bg-muted px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={pickDirectory}
+              title={workDir || '选择工作目录'}
+            >
+              <Icon name="folder" size={13} className="shrink-0 text-primary" />
+              <span className="truncate">{workDir ? workDir.split(/[\\/]/).pop() : '工作目录'}</span>
+            </button>
+          </div>
         </div>
 
         {/* 输入行 */}
@@ -204,6 +235,104 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       </div>
       <div className="mt-2 px-2 text-[11px] text-muted-foreground">
         Enter 发送 · Shift+Enter 换行
+      </div>
+      <ConfigDialog
+        open={limitOpen}
+        limit={toolLimit}
+        mode={confirmMode}
+        onClose={() => setLimitOpen(false)}
+        onSave={saveConfig}
+      />
+    </div>
+  );
+}
+
+// 工具配置弹窗：齿轮按钮触发。包含「工具调用上限」与「规则（手动/自动）」两项。
+function ConfigDialog({
+  open,
+  limit,
+  mode,
+  onClose,
+  onSave,
+}: {
+  open: boolean;
+  limit: number;
+  mode: 'manual' | 'auto';
+  onClose: () => void;
+  onSave: (limit: number, mode: 'manual' | 'auto') => void | Promise<void>;
+}) {
+  const [val, setVal] = useState(String(limit));
+  const [m, setM] = useState<'manual' | 'auto'>(mode);
+  useEffect(() => {
+    if (open) {
+      setVal(String(limit));
+      setM(mode);
+    }
+  }, [open, limit, mode]);
+
+  if (!open) return null;
+
+  const save = () => {
+    const n = parseInt(val, 10);
+    if (!Number.isNaN(n) && n >= 0) {
+      onSave(n, m);
+      onClose();
+    }
+  };
+
+  const seg = (active: boolean) =>
+    'flex-1 rounded-md border px-3 py-1.5 text-xs transition-colors ' +
+    (active
+      ? 'border-primary/40 bg-primary/10 text-primary'
+      : 'border-border bg-muted text-muted-foreground hover:bg-accent hover:text-accent-foreground');
+
+  return (
+    <div className="fixed inset-0 z-[100] flex animate-fade-in items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="w-[380px] max-w-[92vw] animate-scale-in rounded-2xl border border-border bg-card p-5 shadow-lg">
+        {/* 工具调用上限 */}
+        <div className="mb-4">
+          <div className="mb-1.5 text-sm font-medium text-foreground">工具调用上限</div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') save();
+              }}
+              className="w-28 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus-visible:border-primary"
+            />
+            <span className="text-xs text-muted-foreground">次（0 = 不限制）</span>
+          </div>
+        </div>
+
+        {/* 规则：手动 / 自动 */}
+        <div className="mb-5">
+          <div className="mb-1.5 text-sm font-medium text-foreground">规则</div>
+          <div className="flex gap-2">
+            <button type="button" className={seg(m === 'manual')} onClick={() => setM('manual')}>
+              手动
+            </button>
+            <button type="button" className={seg(m === 'auto')} onClick={() => setM('auto')}>
+              自动
+            </button>
+          </div>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+            {m === 'manual' ? '调用工具或命令前弹窗确认。' : '直接执行工具或命令，不再询问用户。'}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2">
+          <button className="btn-outline gap-1.5 text-muted-foreground" onClick={onClose}>
+            <Icon name="x" size={15} />
+            取消
+          </button>
+          <button className="btn-primary gap-1.5" onClick={save}>
+            <Icon name="check" size={15} strokeWidth={2.5} />
+            保存
+          </button>
+        </div>
       </div>
     </div>
   );

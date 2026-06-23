@@ -37,6 +37,7 @@ type Gate struct {
 	pendingReqs map[string]ConfirmRequest
 	allow       []allowRule // session/always rules added by Resolve(remember)
 	emit        func(req ConfirmRequest)
+	autoAllow   bool // 自动放行模式：跳过所有确认（对应"自动"确认规则）
 }
 
 type allowRule struct {
@@ -59,6 +60,14 @@ func (g *Gate) SetEmitter(f func(ConfirmRequest)) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.emit = f
+}
+
+// SetAutoAllow 切换自动放行模式：开启后 Request 立即放行所有工具调用，不发出
+// 确认请求、不进入 pending（对应前端"自动"确认规则）。
+func (g *Gate) SetAutoAllow(v bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.autoAllow = v
 }
 
 // Allowed returns a pre-cached decision if args match a remember rule.
@@ -86,6 +95,14 @@ func (g *Gate) allowed(tool, args, matchKey string) (Decision, bool) {
 // Request satisfies GateInterface. It blocks until the UI resolves the
 // request, the context is cancelled, or a remember rule short-circuits it.
 func (g *Gate) Request(ctx context.Context, req ConfirmRequest) Decision {
+	// 自动放行模式：一切工具调用直接通过，不确认、不进入 pending。
+	g.mu.Lock()
+	auto := g.autoAllow
+	g.mu.Unlock()
+	if auto {
+		log.Printf("[Gate] auto-allow tool=%s args=%q", req.Tool, preview(req.Args, 200))
+		return Decision{Allow: true, Remember: RememberNever}
+	}
 	// short-circuit if a remember rule applies
 	if d, ok := g.allowed(req.Tool, req.Args, req.MatchKey); ok {
 		log.Printf("[Gate] remembered tool=%s match_key=%q args=%q allow=%t", req.Tool, req.MatchKey, preview(req.Args, 200), d.Allow)

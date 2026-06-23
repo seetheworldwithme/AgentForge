@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strconv"
 	"strings"
@@ -47,9 +48,6 @@ func New(deps Deps) *Agent {
 	if deps.MaxIter <= 0 {
 		deps.MaxIter = 20
 	}
-	if deps.LLMRetryWait <= 0 {
-		deps.LLMRetryWait = 30 * time.Second
-	}
 	return &Agent{deps: deps}
 }
 
@@ -94,6 +92,23 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 	// 在 skills 之后 prepend，使其排在最终 system 内容最前（最高优先级）。
 	history = prependSystemContext(history, baseSystemPrompt)
 
+	// 注入 RAG 上下文（一次性）：用户问题在整个工具迭代过程中稳定，因此检索
+	// 与注入只在循环前做一次，避免每轮重复检索、以及 system prompt 随迭代次数
+	// 累积膨胀。低相似度片段被过滤；若全部低于阈值则不注入，由模型凭自身知识作答。
+	if in.UseRAG && a.deps.RAG != nil && in.KBID != "" {
+		query := lastUserText(history)
+		chunks, err := a.deps.RAG.Retrieve(ctx, in.KBID, query, 5)
+		if err == nil {
+			kept := filterRAGChunks(chunks, ragSimilarityThreshold)
+			logRAGRetrieval(query, chunks, kept, ragSimilarityThreshold)
+			if len(kept) > 0 {
+				history = prependRAGContext(history, kept)
+			}
+		} else {
+			log.Printf("[RAG] retrieve failed: %v", err)
+		}
+	}
+
 	var toolSpecs []llm.ToolSpec
 	if in.ToolsEnabled && a.deps.Tools != nil {
 		for _, s := range a.deps.Tools.List() {
@@ -103,7 +118,16 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		}
 	}
 
+	// toolCallCount 累计本轮 Run 中已执行的工具调用次数，用于 MaxToolCalls 硬上限判定。
+	toolCallCount := 0
 	for iter := 0; ; iter++ {
+		// 显式响应取消：避免在 context 已取消时仍发起新一轮 LLM 调用。
+		if err := ctx.Err(); err != nil {
+			log.Printf("[Agent] abort at iter=%d due to context error: %v", iter, err)
+			in.Emit.Emit("error", map[string]any{"message": "任务超时或被取消：" + err.Error()})
+			return
+		}
+
 		if iter > 0 && iter%a.deps.MaxIter == 0 {
 			log.Printf("[Agent] checkpoint: reached %d tool iterations; continuing until task completes", iter)
 			in.Emit.Emit("status", map[string]any{
@@ -113,26 +137,7 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			})
 		}
 
-		// Optionally inject RAG context before the model turn. Low-similarity
-		// chunks are filtered out; if none clear the threshold, nothing is
-		// injected so the model answers from its own knowledge.
-		if in.UseRAG && a.deps.RAG != nil && in.KBID != "" {
-			query := lastUserText(history)
-			chunks, err := a.deps.RAG.Retrieve(ctx, in.KBID, query, 5)
-			if err == nil {
-				kept := filterRAGChunks(chunks, ragSimilarityThreshold)
-				// log the retrieval once per turn (query is stable across tool
-				// iterations) so the RAG pipeline can be debugged/tuned.
-				if iter == 0 {
-					logRAGRetrieval(query, chunks, kept, ragSimilarityThreshold)
-				}
-				if len(kept) > 0 {
-					history = prependRAGContext(history, kept)
-				}
-			}
-		}
-
-		stream, streamStart, ok := a.openChatStreamWithRecovery(ctx, in.Emit, iter, history, toolSpecs)
+		stream, streamStart, ok := a.openChatStream(ctx, in.Emit, iter, history, toolSpecs)
 		if !ok {
 			return
 		}
@@ -206,6 +211,33 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			return
 		}
 
+		// 工具调用硬上限：已达上限时不再执行新的工具调用。把模型本轮的
+		// tool-call turn 记入历史，并为每个调用补一条"未执行"结果（保持消息
+		// 序列合法），发一条警告 status，然后继续——模型下一轮读到"未执行"
+		// 提示后会基于已有结果给出最终文本回答。
+		if a.deps.MaxToolCalls > 0 && toolCallCount >= a.deps.MaxToolCalls {
+			log.Printf("[Agent] tool_limit_reached at iter=%d count=%d limit=%d", iter, toolCallCount, a.deps.MaxToolCalls)
+			in.Emit.Emit("status", map[string]any{
+				"kind":    "tool_limit_reached",
+				"message": fmt.Sprintf("已达到工具调用上限（%d 次），不再执行新的工具调用，模型将基于已有结果给出最终回答。", a.deps.MaxToolCalls),
+				"limit":   a.deps.MaxToolCalls,
+				"count":   toolCallCount,
+			})
+			history = append(history, llm.Message{
+				Role: llm.RoleAssistant, Content: assistantText.String(), ToolCalls: toolCalls,
+			})
+			skipped := "工具调用已达上限，本次未执行。请基于已有结果直接给出最终回答，不要再调用工具。"
+			for _, tc := range toolCalls {
+				in.Emit.Emit("tool_result", map[string]any{
+					"call_id": tc.ID, "content": skipped, "is_error": true,
+				})
+				history = append(history, llm.Message{
+					Role: llm.RoleTool, Content: skipped, ToolCallID: tc.ID,
+				})
+			}
+			continue
+		}
+
 		// record assistant tool-call turn before feeding tool results back.
 		history = append(history, llm.Message{
 			Role: llm.RoleAssistant, Content: assistantText.String(), ToolCalls: toolCalls,
@@ -236,54 +268,24 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				Role: llm.RoleTool, Content: result.Content, ToolCallID: tc.ID,
 			})
 		}
+		toolCallCount += len(toolCalls)
 	}
 }
 
-func (a *Agent) openChatStreamWithRecovery(ctx context.Context, emit EventEmitter, iter int, history []llm.Message, toolSpecs []llm.ToolSpec) (<-chan llm.Chunk, time.Time, bool) {
-	attempt := 0
-	for {
-		attempt++
-		log.Printf("[Agent] iter=%d llm_start attempt=%d history=%d tools=%d last_user=%q",
-			iter, attempt, len(history), len(toolSpecs), truncate(lastUserText(history), 160))
-		streamStart := time.Now()
-		stream, err := a.deps.LLM.ChatStream(ctx, history, toolSpecs)
-		if err == nil {
-			return stream, streamStart, true
-		}
-		if !isRecoverableLLMError(err) {
-			log.Printf("[Agent] llm error at iter=%d attempt=%d: %v", iter, attempt, err)
-			emit.Emit("error", map[string]any{"message": err.Error()})
-			return nil, time.Time{}, false
-		}
-		wait := a.deps.LLMRetryWait
-		log.Printf("[Agent] llm recoverable error at iter=%d attempt=%d; retrying in %s: %v",
-			iter, attempt, wait, err)
-		emit.Emit("status", map[string]any{
-			"kind":    "llm_retry",
-			"message": "模型触发限流，正在等待后自动重试。",
-			"attempt": attempt,
-			"wait_ms": wait.Milliseconds(),
-			"error":   err.Error(),
-		})
-		select {
-		case <-time.After(wait):
-		case <-ctx.Done():
-			log.Printf("[Agent] llm retry canceled at iter=%d attempt=%d: %v", iter, attempt, ctx.Err())
-			emit.Emit("error", map[string]any{"message": ctx.Err().Error()})
-			return nil, time.Time{}, false
-		}
+// openChatStream 发起一轮模型流式调用。瞬态错误（429/5xx）的重试已由
+// llm.Retry 在更底层统一处理，这里不再做二次重试——避免与底层重试叠加，
+// 在 provider 持续限流时陷入无限等待。
+func (a *Agent) openChatStream(ctx context.Context, emit EventEmitter, iter int, history []llm.Message, toolSpecs []llm.ToolSpec) (<-chan llm.Chunk, time.Time, bool) {
+	log.Printf("[Agent] iter=%d llm_start history=%d tools=%d last_user=%q",
+		iter, len(history), len(toolSpecs), truncate(lastUserText(history), 160))
+	streamStart := time.Now()
+	stream, err := a.deps.LLM.ChatStream(ctx, history, toolSpecs)
+	if err != nil {
+		log.Printf("[Agent] llm error at iter=%d: %v", iter, err)
+		emit.Emit("error", map[string]any{"message": err.Error()})
+		return nil, time.Time{}, false
 	}
-}
-
-func isRecoverableLLMError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "429") ||
-		strings.Contains(msg, "rate limit") ||
-		strings.Contains(msg, "rate limiting") ||
-		strings.Contains(msg, "TPM limit")
+	return stream, streamStart, true
 }
 
 func blankAssistantContinuationPrompt() string {
@@ -340,6 +342,9 @@ func logRAGRetrieval(query string, retrieved, kept []RetrievedChunk, threshold f
 
 // truncate clips s to at most n runes (unicode-safe) with an ellipsis.
 func truncate(s string, n int) string {
+	if n <= 0 {
+		return s
+	}
 	r := []rune(s)
 	if len(r) <= n {
 		return s

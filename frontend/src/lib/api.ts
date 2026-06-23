@@ -66,6 +66,14 @@ export const api = {
   getTitleProvider: () => jget<{ provider_id: string }>('/api/settings/title-provider'),
   setTitleProvider: (provider_id: string) =>
     jput<{ provider_id: string }>('/api/settings/title-provider', { provider_id }),
+  // 单次对话的工具调用硬上限。0 = 不限制。
+  getToolLimit: () => jget<{ limit: number }>('/api/settings/tool-limit'),
+  setToolLimit: (limit: number) =>
+    jput<{ limit: number }>('/api/settings/tool-limit', { limit }),
+  // 工具确认规则：manual（逐次确认）/ auto（直接执行）。
+  getConfirmMode: () => jget<{ mode: 'manual' | 'auto' }>('/api/settings/confirm-mode'),
+  setConfirmMode: (mode: 'manual' | 'auto') =>
+    jput<{ mode: string }>('/api/settings/confirm-mode', { mode }),
   // Validate connectivity before saving. `kind` picks the probe path:
   // "chat" (default) sends one chat completion; "embed" requests one
   // embedding. Returns ok/error; never throws on auth failure — the UI

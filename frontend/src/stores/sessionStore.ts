@@ -176,7 +176,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             session_id: id, role: 'assistant', content: '',
           });
         } else if (e.event === 'status') {
-          // Keep the stream alive; backend logs carry the detailed retry state.
+          // 工具调用上限：插入一条居中警告气泡，其余 status 仅保活，不渲染。
+          if (e.data?.kind === 'tool_limit_reached') {
+            const msg = e.data?.message ?? '已达到工具调用上限，不再执行新的工具调用。';
+            return { messages: [...msgs, { id: 'warn-' + Date.now(), session_id: id, role: 'assistant', content: msg, variant: 'warning' }] };
+          }
           return st;
         } else if (e.event === 'error') {
           const text = e.data?.message ? `错误：${e.data.message}` : '错误：请求失败';

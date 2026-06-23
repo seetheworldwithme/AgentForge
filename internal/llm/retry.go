@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -83,18 +84,13 @@ func (r *Retry) Chat(ctx context.Context, msgs []Message) (string, error) {
 	return "", fmt.Errorf("after %d retries: %w", r.max, lastErr)
 }
 
-// isTransient returns true for 429 / 5xx style errors (matched by substring).
+// isTransient returns true for retryable provider errors: rate limiting (429)
+// and server-side failures (5xx).判定基于 *HTTPError 类型而非错误消息字符串，
+// 这样 provider 改变措辞也不会漏判。
 func isTransient(err error) bool {
-	msg := err.Error()
-	return contains(msg, "429") || contains(msg, "500") ||
-		contains(msg, "502") || contains(msg, "503") || contains(msg, "504")
-}
-
-func contains(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
+	var httpErr *HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.RateLimited() || httpErr.ServerError()
 	}
 	return false
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/agent-rust/core/internal/llm"
@@ -24,6 +25,10 @@ func (h *ConfigHandler) Routes(r chi.Router) {
 	r.Delete("/providers/{id}", h.deleteProvider)
 	r.Get("/settings/title-provider", h.getTitleProvider)
 	r.Put("/settings/title-provider", h.setTitleProvider)
+	r.Get("/settings/tool-limit", h.getToolLimit)
+	r.Put("/settings/tool-limit", h.setToolLimit)
+	r.Get("/settings/confirm-mode", h.getConfirmMode)
+	r.Put("/settings/confirm-mode", h.setConfirmMode)
 }
 
 type providerDTO struct {
@@ -203,6 +208,82 @@ func (h *ConfigHandler) setTitleProvider(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"provider_id": body.ProviderID})
+}
+
+// defaultToolLimit 是工具调用硬上限的默认值。用户未配置时使用，可在齿轮
+// 配置弹窗中修改。0 表示不限制（仅靠 context 超时兜底）。
+const defaultToolLimit = 50
+
+// toolLimitSetting 读取 max_tool_calls 设置：空或无效时回落到默认值。
+// 返回 0 表示用户显式配置为"不限"。
+func toolLimitSetting(db *store.DB) int {
+	if v, _ := db.GetSetting("max_tool_calls"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return defaultToolLimit
+}
+
+// getToolLimit / setToolLimit 暴露单次会话的工具调用硬上限。
+func (h *ConfigHandler) getToolLimit(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"limit": toolLimitSetting(h.DB)})
+}
+
+func (h *ConfigHandler) setToolLimit(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Limit int `json:"limit"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.Limit < 0 {
+		body.Limit = 0 // 负数归一为 0（不限）
+	}
+	if err := h.DB.SetSetting("max_tool_calls", strconv.Itoa(body.Limit)); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"limit": body.Limit})
+}
+
+// 工具确认规则的两种取值。
+const (
+	confirmModeManual = "manual" // 手动：危险工具/命令逐次弹窗确认
+	confirmModeAuto   = "auto"   // 自动：直接执行，不询问用户
+)
+
+// confirmModeSetting 读取工具确认规则。空或非法值回落 manual（更安全）。
+func confirmModeSetting(db *store.DB) string {
+	if v, _ := db.GetSetting("confirm_mode"); v == confirmModeAuto {
+		return confirmModeAuto
+	}
+	return confirmModeManual
+}
+
+// getConfirmMode / setConfirmMode 暴露工具确认规则（手动/自动）。
+func (h *ConfigHandler) getConfirmMode(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"mode": confirmModeSetting(h.DB)})
+}
+
+func (h *ConfigHandler) setConfirmMode(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	mode := confirmModeManual
+	if body.Mode == confirmModeAuto {
+		mode = confirmModeAuto
+	}
+	if err := h.DB.SetSetting("confirm_mode", mode); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"mode": mode})
 }
 
 func toProviderDTO(p store.Provider) providerDTO {

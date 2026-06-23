@@ -130,7 +130,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		return nil, fmt.Errorf("llm http %d: %s", resp.StatusCode, string(b))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: string(b)}
 	}
 
 	ch := make(chan Chunk, 8)
@@ -250,7 +250,7 @@ func (c *OpenAIClient) Embed(ctx context.Context, inputs []string) ([][]float32,
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("embed http %d: %s", resp.StatusCode, string(b))
+		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: "embed: " + string(b)}
 	}
 	var out struct {
 		Data []struct {
@@ -286,7 +286,7 @@ func (c *OpenAIClient) Chat(ctx context.Context, msgs []Message) (string, error)
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("llm http %d: %s", resp.StatusCode, string(b))
+		return "", &HTTPError{StatusCode: resp.StatusCode, Body: string(b)}
 	}
 	var out struct {
 		Choices []struct {

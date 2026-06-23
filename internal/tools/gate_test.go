@@ -152,3 +152,42 @@ func TestGateRememberAllowsNextTime(t *testing.T) {
 		t.Error("emitter should not be called on a remembered request")
 	}
 }
+
+// TestGateAutoAllowSkipsConfirmation 验证"自动"确认模式：开启 autoAllow 后，
+// Request 立即放行，不调用 emitter、不进入 pending，用户无需逐次确认。
+func TestGateAutoAllowSkipsConfirmation(t *testing.T) {
+	g := NewGate()
+	called := false
+	g.SetEmitter(func(req ConfirmRequest) { called = true })
+	g.SetAutoAllow(true)
+
+	d := g.Request(context.Background(), ConfirmRequest{
+		ID: "a1", Tool: "bash", Args: `{"command":"rm -rf /tmp/x"}`,
+	})
+	if !d.Allow {
+		t.Fatal("auto-allow should permit every tool call without confirmation")
+	}
+	if called {
+		t.Fatal("emitter must not be called in auto-allow mode")
+	}
+	if pending := g.Pending(); len(pending) != 0 {
+		t.Fatalf("no request should be pending in auto-allow mode, got %+v", pending)
+	}
+}
+
+// TestGateManualModeStillConfirms 验证默认（手动）模式下行为不变：emitter
+// 被调用，仍走正常确认流程。
+func TestGateManualModeStillConfirms(t *testing.T) {
+	g := NewGate()
+	emitCount := 0
+	g.SetEmitter(func(req ConfirmRequest) {
+		emitCount++
+		g.Resolve(req.ID, Decision{Allow: true, Remember: RememberNever})
+	})
+	if d := g.Request(context.Background(), ConfirmRequest{ID: "m1", Tool: "bash"}); !d.Allow {
+		t.Fatal("manual mode should allow after confirmation")
+	}
+	if emitCount != 1 {
+		t.Fatalf("emitter called %d times in manual mode, want 1", emitCount)
+	}
+}

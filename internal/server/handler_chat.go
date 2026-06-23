@@ -83,6 +83,8 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// return so a stale emitter never leaks into another chat. (Gate is a
 	// process-wide singleton; only one chat is active at a time.)
 	if h.Gate != nil {
+		// 按确认规则设置 Gate：自动模式直接放行所有工具调用，手动模式逐次确认。
+		h.Gate.SetAutoAllow(confirmModeSetting(h.DB) == confirmModeAuto)
 		h.Gate.SetEmitter(func(req tools.ConfirmRequest) {
 			log.Printf("[Chat] confirm_emit session=%s request_id=%s tool=%s args=%q",
 				id, req.ID, req.Tool, truncateForLog(req.Args, 240))
@@ -137,7 +139,8 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a := agent.New(agent.Deps{
-		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, Skills: h.Skills, MaxIter: 20,
+		LLM: llmClient, Tools: h.Engine, RAG: h.RAG, Skills: h.Skills,
+		MaxToolCalls: toolLimitSetting(h.DB),
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()

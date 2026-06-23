@@ -85,3 +85,36 @@ func postJSON(t *testing.T, router http.Handler, path string, body any) string {
 	router.ServeHTTP(rec, req)
 	return rec.Body.String()
 }
+
+func getJSON(t *testing.T, router http.Handler, path string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, path, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	return rec.Body.String()
+}
+
+// TestConfirmModeDefaultsToManualAndPersists 验证工具确认规则（手动/自动）：
+// 默认 manual；PUT auto 后持久化，再 GET 仍为 auto；非法值回退 manual。
+func TestConfirmModeDefaultsToManualAndPersists(t *testing.T) {
+	db, _ := store.Open(t.TempDir() + "/confirm.db")
+	defer db.Close()
+	router := NewRouter(Deps{DB: db})
+
+	if body := getJSON(t, router, "/api/settings/confirm-mode"); !strings.Contains(body, `"mode":"manual"`) {
+		t.Fatalf("default mode: expected manual, got %s", body)
+	}
+
+	if body := putJSON(t, router, "/api/settings/confirm-mode", map[string]any{"mode": "auto"}, http.StatusOK); !strings.Contains(body, `"mode":"auto"`) {
+		t.Fatalf("set auto: got %s", body)
+	}
+
+	if body := getJSON(t, router, "/api/settings/confirm-mode"); !strings.Contains(body, `"mode":"auto"`) {
+		t.Fatalf("persisted mode: expected auto, got %s", body)
+	}
+
+	// 非法值归一为 manual，避免写入脏数据导致后续解析异常
+	if body := putJSON(t, router, "/api/settings/confirm-mode", map[string]any{"mode": "bogus"}, http.StatusOK); !strings.Contains(body, `"mode":"manual"`) {
+		t.Fatalf("invalid mode: expected manual fallback, got %s", body)
+	}
+}

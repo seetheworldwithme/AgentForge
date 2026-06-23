@@ -31,6 +31,7 @@ export interface Message {
   citations?: string; // JSON
   tokens_in?: number;
   tokens_out?: number;
+  variant?: 'warning'; // 非对话内容型消息：warning = 居中警告提示气泡
 }
 
 export interface KnowledgeBase {

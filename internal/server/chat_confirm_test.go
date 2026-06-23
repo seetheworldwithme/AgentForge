@@ -194,3 +194,75 @@ func extractJSON(line, key string) string {
 	}
 	return line[start : start+end]
 }
+
+// TestChatAutoModeSkipsConfirm 验证"自动"确认规则：confirm_mode=auto 时，
+// 危险工具（bash）直接执行，不发出 confirm_req，对话照常产出 tool_result 与最终答复。
+// 若意外出现 confirm_req，也 resolve 它以免 gate 阻塞到超时（让测试干净失败而非挂起）。
+func TestChatAutoModeSkipsConfirm(t *testing.T) {
+	fake := fakeToolCallServer(t)
+	defer fake.Close()
+
+	db, _ := store.Open(t.TempDir() + "/auto.db")
+	defer db.Close()
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	db.CreateProvider(store.Provider{
+		ID: "prov_1", Name: "fake", BaseURL: fake.URL, APIKey: "k",
+		ChatModel: "m", IsDefault: true, CreatedAt: now, UpdatedAt: now,
+	})
+	db.CreateSession(store.Session{
+		ID: "sess_1", Title: "t", ProviderID: "prov_1", ToolsEnabled: 1,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	if err := db.SetSetting("confirm_mode", "auto"); err != nil { // 自动模式
+		t.Fatalf("set confirm_mode: %v", err)
+	}
+
+	gate := tools.NewGate()
+	engine := tools.NewEngine(tools.NewRegistry(builtin.Bash{}), gate)
+	router := NewRouter(Deps{DB: db, Gate: gate, Engine: engine})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	chatResp, err := http.Post(srv.URL+"/api/sessions/sess_1/chat",
+		"application/json", strings.NewReader(`{"message":"run it","tools_enabled":true}`))
+	if err != nil {
+		t.Fatalf("chat post: %v", err)
+	}
+	defer chatResp.Body.Close()
+
+	sc := bufio.NewScanner(chatResp.Body)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var sawConfirmReq, sawToolResult, sawDone bool
+	for sc.Scan() {
+		line := sc.Text()
+		if strings.HasPrefix(line, "event: confirm_req") {
+			sawConfirmReq = true
+		}
+		// 防止 gate 在意外 confirm_req 时阻塞到超时：发现就放行。
+		if strings.HasPrefix(line, "data: ") && strings.Contains(line, `"request_id":"`) {
+			if id := extractJSON(line, "request_id"); id != "" {
+				if cresp, cerr := http.Post(srv.URL+"/api/tools/confirm", "application/json",
+					strings.NewReader(`{"request_id":"`+id+`","decision":"allow","remember":"never"}`)); cerr == nil {
+					cresp.Body.Close()
+				}
+			}
+		}
+		if strings.Contains(line, "tool_result") {
+			sawToolResult = true
+		}
+		if strings.HasPrefix(line, "event: done") {
+			sawDone = true
+		}
+	}
+
+	if sawConfirmReq {
+		t.Error("auto mode must NOT emit confirm_req, but one was seen")
+	}
+	if !sawToolResult {
+		t.Error("missing tool_result (bash should run directly in auto mode)")
+	}
+	if !sawDone {
+		t.Error("missing done event")
+	}
+}
