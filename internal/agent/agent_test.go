@@ -26,6 +26,9 @@ func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) 
 }
 
 func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.ToolSpec) (<-chan llm.Chunk, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	f.lastMessages = append([]llm.Message(nil), msgs...)
 	if f.calls < len(f.errors) && f.errors[f.calls] != nil {
 		err := f.errors[f.calls]
@@ -69,6 +72,24 @@ func (r *recorderEmitter) Emit(event string, data any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
+}
+
+type cancelAfterToolResultsEmitter struct {
+	rec    recorderEmitter
+	limit  int
+	cancel context.CancelFunc
+	count  int
+}
+
+func (r *cancelAfterToolResultsEmitter) Emit(event string, data any) {
+	r.rec.Emit(event, data)
+	if event != "tool_result" {
+		return
+	}
+	r.count++
+	if r.count >= r.limit {
+		r.cancel()
+	}
 }
 
 func TestRunPlainTextThenDone(t *testing.T) {
@@ -154,6 +175,38 @@ func TestRunFinalizesAfterToolResultAtMaxIter(t *testing.T) {
 	}
 }
 
+func TestRunContinuesToolCallsPastMaxIterCheckpoint(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"excelcli query step 1"}`}}},
+		{{ToolCall: &llm.ToolCall{ID: "c2", Name: "bash", Args: `{"command":"excelcli query step 2"}`}}},
+		{{Text: "final answer after both queries"}, {Done: true}},
+	}}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 1})
+
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "analyze transactions"}},
+		Emit:    rec,
+	})
+
+	if m.calls != 3 {
+		t.Fatalf("LLM calls = %d, want 3 so tool use can continue past the checkpoint; events=%v", m.calls, rec.events)
+	}
+	toolCalls := 0
+	for _, e := range rec.events {
+		if e == "tool_call" {
+			toolCalls++
+		}
+	}
+	if toolCalls != 2 {
+		t.Fatalf("tool_call count=%d, want 2; events=%v", toolCalls, rec.events)
+	}
+	joined := join(rec.events)
+	if !contains(joined, "status") || !contains(joined, "delta") || !contains(joined, "done") {
+		t.Fatalf("expected checkpoint status, final answer delta, and done; got %v", rec.events)
+	}
+}
+
 func TestRunDoesNotStopOnBlankAnswerAfterToolResult(t *testing.T) {
 	m := &fakeLLM{scripts: [][]llm.Chunk{
 		{{ToolCall: &llm.ToolCall{ID: "c1", Name: "bash", Args: `{"command":"excelcli import"}`}}},
@@ -228,16 +281,18 @@ func TestRunDoesNotTreatIncompleteTextStreamAsFinalAnswer(t *testing.T) {
 	}
 }
 
-func TestRunRespectsMaxIter(t *testing.T) {
-	// LLM always emits a tool call -> infinite loop unless capped
+func TestRunContinuesPastMaxIterUntilContextCanceled(t *testing.T) {
+	// LLM always emits a tool call. MaxIter is only a checkpoint; context
+	// cancellation is the safety stop for a task that never reaches final text.
 	m := &fakeLLM{scripts: [][]llm.Chunk{
 		{{ToolCall: &llm.ToolCall{ID: "c", Name: "bash", Args: "{}"}}},
 	}}
-	rec := &recorderEmitter{}
+	ctx, cancel := context.WithCancel(context.Background())
+	rec := &cancelAfterToolResultsEmitter{limit: 5, cancel: cancel}
 	a := New(Deps{LLM: m, Tools: wrapEngine(&fakeToolEngine{}), MaxIter: 3})
 	done := make(chan struct{})
 	go func() {
-		a.Run(context.Background(), RunInput{
+		a.Run(ctx, RunInput{
 			History: []llm.Message{{Role: llm.RoleUser, Content: "x"}}, Emit: rec,
 		})
 		close(done)
@@ -245,16 +300,19 @@ func TestRunRespectsMaxIter(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("Run did not terminate within 2s (maxIter not respected)")
+		t.Fatal("Run did not terminate after context cancellation")
 	}
 	count := 0
-	for _, e := range rec.events {
+	for _, e := range rec.rec.events {
 		if e == "tool_call" {
 			count++
 		}
 	}
-	if count != 3 {
-		t.Errorf("tool_call count=%d want 3", count)
+	if count != 5 {
+		t.Errorf("tool_call count=%d want 5; events=%v", count, rec.rec.events)
+	}
+	if !contains(join(rec.rec.events), "status") {
+		t.Errorf("expected checkpoint status event, got %v", rec.rec.events)
 	}
 }
 

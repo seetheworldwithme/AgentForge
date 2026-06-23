@@ -103,23 +103,14 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		}
 	}
 
-	for iter := 0; iter <= a.deps.MaxIter; iter++ {
-		finalizingAfterMaxTools := iter == a.deps.MaxIter
-		activeToolSpecs := toolSpecs
-		if finalizingAfterMaxTools {
-			if !lastMessageIsTool(history) {
-				break
-			}
-			log.Printf("[Agent] max tool iterations reached (%d); requesting final answer without tools", a.deps.MaxIter)
+	for iter := 0; ; iter++ {
+		if iter > 0 && iter%a.deps.MaxIter == 0 {
+			log.Printf("[Agent] checkpoint: reached %d tool iterations; continuing until task completes", iter)
 			in.Emit.Emit("status", map[string]any{
-				"kind":    "tool_budget_exhausted",
-				"message": "工具调用次数已达到上限，正在基于已有工具结果生成最终答复。",
+				"kind":    "tool_iteration_checkpoint",
+				"message": "工具调用已达到一个安全检查点，任务尚未完成，继续执行后续工具调用。",
+				"iter":    iter,
 			})
-			history = append(history, llm.Message{
-				Role:    llm.RoleUser,
-				Content: maxIterationsFinalAnswerPrompt(),
-			})
-			activeToolSpecs = nil
 		}
 
 		// Optionally inject RAG context before the model turn. Low-similarity
@@ -141,7 +132,7 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			}
 		}
 
-		stream, streamStart, ok := a.openChatStreamWithRecovery(ctx, in.Emit, iter, history, activeToolSpecs)
+		stream, streamStart, ok := a.openChatStreamWithRecovery(ctx, in.Emit, iter, history, toolSpecs)
 		if !ok {
 			return
 		}
@@ -158,11 +149,6 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				in.Emit.Emit("delta", map[string]any{"text": chunk.Text})
 			}
 			if chunk.ToolCall != nil {
-				if finalizingAfterMaxTools {
-					log.Printf("[Agent] ignored tool call during final answer after max iterations: id=%s name=%s",
-						chunk.ToolCall.ID, chunk.ToolCall.Name)
-					continue
-				}
 				toolCalls = append(toolCalls, *chunk.ToolCall)
 				in.Emit.Emit("tool_call", map[string]any{
 					"call_id": chunk.ToolCall.ID,
@@ -188,11 +174,6 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				in.Emit.Emit("error", map[string]any{"message": "任务超时或被取消：" + ctx.Err().Error()})
 				return
 			}
-			if finalizingAfterMaxTools {
-				log.Printf("[Agent] final answer stream incomplete after max iterations; preview=%q", truncate(assistantText.String(), 200))
-				in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
-				return
-			}
 			log.Printf("[Agent] incomplete stream at iter=%d; continuing original task, preview=%q", iter, truncate(assistantText.String(), 200))
 			in.Emit.Emit("status", map[string]any{
 				"kind":    "llm_incomplete_stream",
@@ -209,11 +190,6 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 
 		if len(toolCalls) == 0 {
 			if strings.TrimSpace(assistantText.String()) == "" {
-				if finalizingAfterMaxTools {
-					log.Printf("[Agent] blank final answer after max iterations")
-					in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
-					return
-				}
 				log.Printf("[Agent] blank assistant turn at iter=%d; continuing original task", iter)
 				history = append(history, llm.Message{
 					Role:    llm.RoleUser,
@@ -261,10 +237,6 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			})
 		}
 	}
-
-	// hit max iterations
-	log.Printf("[Agent] stop: reached max iterations (%d)", a.deps.MaxIter)
-	in.Emit.Emit("done", map[string]any{"reason": "max_iterations"})
 }
 
 func (a *Agent) openChatStreamWithRecovery(ctx context.Context, emit EventEmitter, iter int, history []llm.Message, toolSpecs []llm.ToolSpec) (<-chan llm.Chunk, time.Time, bool) {
@@ -320,14 +292,6 @@ func blankAssistantContinuationPrompt() string {
 
 func incompleteStreamContinuationPrompt() string {
 	return "上一轮模型响应流没有完整结束，不能把其中的中间说明当成最终结果。请继续完成用户的原始任务；如果刚才只是说“将要撰写/将要生成”，现在必须继续调用工具或直接生成完整交付物。"
-}
-
-func maxIterationsFinalAnswerPrompt() string {
-	return "工具调用次数已经达到本轮安全上限。不要再调用任何工具；请只基于目前已有的工具结果和对话上下文，给出尽可能完整、明确的最终答复。如果仍有缺口，请在最终答复中说明缺少什么信息。"
-}
-
-func lastMessageIsTool(history []llm.Message) bool {
-	return len(history) > 0 && history[len(history)-1].Role == llm.RoleTool
 }
 
 func lastUserText(history []llm.Message) string {
