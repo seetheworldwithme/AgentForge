@@ -17,7 +17,7 @@
 |---|---|---|
 | 文件夹注入策略 | **注入目录树**（所有文件相对路径），内容不注入 | 省 token、永不爆炸、保留结构感 |
 | 交互范式 | **开头触发 + chip**（`@` 必须在输入框开头） | 复用现有 `/` 模式，实现简洁一致 |
-| 导航深度 | **两级双列**（顶层 + 高亮文件夹的二级） | 覆盖绝大多数场景，组件复杂度可控 |
+| 导航深度 | **多列无限级**（→ 可在任意层级文件夹继续下钻，类 Finder 列视图） | 初始仅顶层，按 → 逐级展开；覆盖深层文件 |
 | 注入载体 | **后端读取**（前端只传相对路径数组） | Wails 前端不便读文件；后端有 WorkDir 可做越界校验；复用文件读取逻辑 |
 | 注入位置 | **prepend 到本次 user message**，随消息存 DB | 跨轮持久化零额外成本，来源清晰 |
 | 单文件 | 读取内容 + 大小上限（超出截断 + 标注） | 防止大文件撑爆上下文 |
@@ -25,14 +25,13 @@
 ## 3. 范围
 
 ### 范围内
-- `@` 开头触发双列两级文件菜单（基于 WorkDir）。
+- `@` 开头触发多列无限级文件菜单（基于 WorkDir，类 Finder 列视图）。
 - 选中文件 / 文件夹后渲染 chip，随消息发送。
 - 后端按 attachments 读取并注入上下文。
 - 安全校验（路径越界）、大小 / 条数截断、排除规则。
 
 ### 范围外（非目标，YAGNI）
 - 任意位置 inline mention（句子中嵌入 `@token`）。
-- 无限级下钻（类 Finder 列视图）。
 - 附件内容的独立缓存 / 去重接口。
 - symlink 跟随（基础校验即可）。
 - 前端富文本 token 渲染。
@@ -57,29 +56,29 @@
 
 | 文件 | 改动 |
 |---|---|
-| `frontend/src/components/FileMenu.tsx`（新） | 双列两级导航，复用 `SlashMenu` 的 `forwardRef + useImperativeHandle(handleKey)` 模式 |
+| `frontend/src/components/FileMenu.tsx`（新） | 多列无限级导航（动态列 + scrollIntoView 滚动跟随），复用 `SlashMenu` 的 `forwardRef + useImperativeHandle(handleKey)` 模式 |
 | `frontend/src/components/ChatInput.tsx` | `text.startsWith('@')` 触发 FileMenu；新增 `attachments: string[]` 状态 + chip 区；`send` 透传 `attachments` |
 | `frontend/src/stores/sessionStore.ts` | `send` 的 opts 增加 `attachments?: string[]` |
 | `frontend/src/lib/sse.ts` | `streamChat` opts 增加 `attachments?: string[]` |
 | `frontend/src/lib/api.ts` | 新增 `listTree(path?: string): Promise<TreeItem[]>` |
 | `frontend/src/types.ts` | 新增 `TreeItem = { name: string; is_dir: boolean; path: string }` |
 
-### 键盘交互（两级双列）
+### 键盘交互（多列无限级，类 Finder 列视图）
 
 ```
 输入 @
-┌──────────────┬──────────────┐
-│ ▸ cmd        │ ▸ core       │
-│ ▶ internal ◀ │ ▸ server     │ ← 左列高亮 internal
-│ ▸ frontend   │   main.go    │   右列 = internal 子项
-│   main.go    │   types.go   │
-└──────────────┴──────────────┘
-↑↓ 移左列 │ → 进右列选子项 │ ← 退回左列 │ Enter 选当前列高亮项 │ Esc 关闭
-左列 Enter(internal) → 选中整个 internal/        → chip [📁 internal ×]
-右列 Enter(main.go)  → 选中 internal/server/main.go → chip [📂 main.go ×]
+┌──────────┬──────────┬──────────┐
+│ ▸ cmd    │ ▸ server │ main.go  │
+│ ▶ intern▶│ ▸ tools ▶│          │ ← → 可在任意层级继续下钻
+│ ▸ front  │   main.go│          │
+└──────────┴──────────┴──────────┘
+↑↓ 移当前列 │ → 进下一列（仅文件夹可下钻） │ ← 退上一列 │ Enter 选当前列高亮项 │ Esc 关闭
+Enter(internal)     → 选中整个 internal/         → chip [📁 internal ×]
+Enter(main.go,深层) → 选中 internal/server/main.go → chip [📂 main.go ×]
 ```
 
-- 左列列出 WorkDir 顶层；右列实时反映左列高亮文件夹的直接子项。
+- 列 0 = WorkDir 顶层；每列 = 上一列高亮文件夹的子项，列数随 → 下钻动态增长、横向滚动。
+- 高亮项滚入可视区（`scrollIntoView`），按 ↓ 到列底部可继续往下看后面的文件。
 - 文件夹在前、按名字排序，复用现有 `Icon`（folder / file 图标），不使用 emoji。
 - `@` 之后输入的文字作为**当前列过滤词**（按 name 大小写不敏感包含匹配，无匹配时该列显示空）。
 - chip 展示相对路径；文件夹 chip 用 folder 图标，文件 chip 用 file 图标，点击 × 移除。
@@ -150,7 +149,7 @@ internal/server/handler_chat.go
 | `MaxTreeEntries`（目录树条数上限） | 2000 |
 | 目录树排除目录 | `.git node_modules dist build target vendor .next .idea .vscode` |
 | 二进制检测 | 按扩展名或前若干字节含 NUL 判定，跳过 |
-| 列目录深度 | 两级（前端控制，接口本身不限） |
+| 列目录深度 | 无限级（前端按 → 逐级展开，接口本身不限） |
 
 ## 11. 测试
 
@@ -163,11 +162,11 @@ internal/server/handler_chat.go
 6. chat 端到端：带 `attachments` 的请求，user message 持久化后含 `<attachments>` 块。
 
 ### 前端（可选，项目现有前端测试较少）
-- 双列键盘导航状态机（左列 / 右列切换、Enter 选中、Esc 关闭）。
+- 多列键盘导航状态机（→ 下钻、← 退回、Enter 选中、Esc 关闭、滚动跟随）。
 - chip 增删、`attachments` 随 send 正确透传。
 
 ## 12. 风险与权衡
 
 - **文件夹只进目录树**：模型看到结构但看不到内容，需自行调用 file_read 工具读取。这是有意为之，换取 token 安全。用户已确认接受。
-- **两级深度**：无法直接选中三级以上的深层文件。可通过先选父文件夹、再由模型读取，或后续扩展为无限级。MVP 范围内可接受。
+- **多列下钻**：→ 可在任意层级继续展开直到文件；深层嵌套时列数增多，靠横向滚动与高亮滚动跟随保持可用。
 - **`@` 开头触发**：无法在句子中间引用文件。与 `/` 一致，用户已确认。
