@@ -130,3 +130,14 @@ export interface ConfirmReq {
   input: any;
   match_key_hint?: string;
 }
+
+// 跨会话记忆条目（镜像 internal/memory Entry 的 JSON）。
+export type MemoryType = 'user' | 'feedback' | 'project' | 'reference';
+
+export interface MemoryEntry {
+  name: string;
+  description: string;
+  type: MemoryType;
+  body: string;
+  updated_at: string;
+}

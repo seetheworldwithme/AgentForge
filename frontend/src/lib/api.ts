@@ -10,6 +10,7 @@ import type {
   Skill,
   MCPServer,
   TreeItem,
+  MemoryEntry,
 } from '../types';
 
 // All network I/O lives here. Components/stores never call fetch directly.
@@ -145,4 +146,11 @@ export const api = {
     jget<{ items: TreeItem[] }>(
       path ? `/api/workdir/tree?path=${encodeURIComponent(path)}` : '/api/workdir/tree',
     ),
+
+  // --- memory（跨会话记忆） ---
+  listMemory: () => jget<{ entries: MemoryEntry[] }>('/api/memory'),
+  getMemory: (name: string) => jget<MemoryEntry>(`/api/memory/${encodeURIComponent(name)}`),
+  saveMemory: (name: string, body: { description: string; type: string; body: string }) =>
+    jput<{ name: string }>(`/api/memory/${encodeURIComponent(name)}`, body),
+  deleteMemory: (name: string) => jdel(`/api/memory/${encodeURIComponent(name)}`),
 };

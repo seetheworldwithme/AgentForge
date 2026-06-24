@@ -31,7 +31,8 @@ export type IconName =
   | 'refresh-cw'
   | 'wrench'
   | 'terminal'
-  | 'square';
+  | 'square'
+  | 'brain';
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: (
@@ -187,6 +188,9 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   square: <rect width="14" height="14" x="5" y="5" rx="2" />,
+  brain: (
+    <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+  ),
 };
 
 interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
