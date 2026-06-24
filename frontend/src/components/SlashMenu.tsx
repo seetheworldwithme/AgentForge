@@ -1,4 +1,4 @@
-// 斜杠菜单：输入 `/` 触发，按「计划模式 → Skills → MCP」优先级分组展示。
+// 斜杠菜单：输入 `/` 触发，按「计划模式 → Skills」分组展示。
 // 支持模糊过滤与键盘导航（↑↓ 移动、Enter 切换、Esc 关闭）。勾选状态由父组件
 // （ChatInput）持有并下传，本组件仅负责展示与触发 toggle，不持久化任何状态。
 import {
@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { Icon, type IconName } from './Icon';
-import type { Skill, MCPServer } from '../types';
+import type { Skill } from '../types';
 
 // 父组件通过 ref 转发 textarea 的导航键到菜单。
 export type SlashMenuHandle = { handleKey: (key: string) => void };
@@ -19,24 +19,14 @@ interface Props {
   query: string; // `/` 之后的过滤词
   planMode: boolean;
   skillIDs: string[];
-  mcpIDs: string[];
   skills: Skill[] | null; // 由父组件加载并下发，null 表示尚未加载
-  mcps: MCPServer[] | null;
   onTogglePlan: () => void;
   onToggleSkill: (id: string) => void;
-  onToggleMCP: (id: string) => void;
   onClose: () => void;
 }
 
-// 扁平候选项：计划模式固定首位，其后是可见 Skills、可见 MCP。
-// 键盘高亮索引直接对应这个数组的下标。
-type Item =
-  | { kind: 'plan' }
-  | { kind: 'skill'; id: string; name: string; desc: string }
-  | { kind: 'mcp'; id: string; name: string };
-
 export const SlashMenu = forwardRef<SlashMenuHandle, Props>(function SlashMenu(
-  { query, planMode, skillIDs, mcpIDs, skills, mcps, onTogglePlan, onToggleSkill, onToggleMCP, onClose },
+  { query, planMode, skillIDs, skills, onTogglePlan, onToggleSkill, onClose },
   ref,
 ) {
   const [highlight, setHighlight] = useState(0);
@@ -49,18 +39,10 @@ export const SlashMenu = forwardRef<SlashMenuHandle, Props>(function SlashMenu(
       (skills ?? []).filter((s) => s.source !== 'global' && (!q || s.name.toLowerCase().includes(q))),
     [skills, q],
   );
-  const visibleMcps = useMemo(
-    () =>
-      (mcps ?? []).filter(
-        (m) => !q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q),
-      ),
-    [mcps, q],
-  );
 
-  // 候选项顺序固定：plan(1) + skills + mcps。索引即高亮下标。
+  // 候选项顺序固定：plan(1) + skills。索引即高亮下标。
   const skillBase = 1;
-  const mcpBase = skillBase + visibleSkills.length;
-  const total = mcpBase + visibleMcps.length;
+  const total = skillBase + visibleSkills.length;
 
   // 过滤词变化时重置高亮到计划行，避免越界停留在已消失的项上。
   useEffect(() => {
@@ -69,8 +51,7 @@ export const SlashMenu = forwardRef<SlashMenuHandle, Props>(function SlashMenu(
 
   const triggerAt = (idx: number) => {
     if (idx === 0) onTogglePlan();
-    else if (idx < mcpBase) onToggleSkill(visibleSkills[idx - skillBase].id);
-    else onToggleMCP(visibleMcps[idx - mcpBase].id);
+    else onToggleSkill(visibleSkills[idx - skillBase].id);
   };
 
   // 暴露给父组件：textarea 的导航键转发到这里。依赖变化时重建，避免闭包持有旧值。
@@ -88,10 +69,10 @@ export const SlashMenu = forwardRef<SlashMenuHandle, Props>(function SlashMenu(
         else if (key === 'Enter') triggerAt(Math.min(highlight, total - 1));
       },
     }),
-    [total, highlight, visibleSkills, visibleMcps, onClose, onTogglePlan, onToggleSkill, onToggleMCP],
+    [total, highlight, visibleSkills, onClose, onTogglePlan, onToggleSkill],
   );
 
-  const loading = skills === null || mcps === null;
+  const loading = skills === null;
 
   return (
     <div className="absolute bottom-full left-0 right-0 z-50 mb-2 max-h-80 overflow-auto rounded-xl border border-border bg-card shadow-lg">
@@ -122,26 +103,11 @@ export const SlashMenu = forwardRef<SlashMenuHandle, Props>(function SlashMenu(
         />
       ))}
 
-      {/* MCP */}
-      <SectionTitle icon="wrench">MCP{mcps && `（${visibleMcps.length}/${mcps.length}）`}</SectionTitle>
-      {visibleMcps.map((m, i) => (
-        <Row
-          key={m.id}
-          active={highlight === mcpBase + i}
-          selected={mcpIDs.includes(m.id)}
-          onClick={() => onToggleMCP(m.id)}
-          onHover={() => setHighlight(mcpBase + i)}
-          icon="wrench"
-          label={m.name}
-          desc={m.id}
-        />
-      ))}
-
       {loading && (
         <div className="px-3 py-3 text-center text-xs text-muted-foreground">加载中…</div>
       )}
-      {!loading && visibleSkills.length === 0 && visibleMcps.length === 0 && (
-        <div className="px-3 py-3 text-center text-xs text-muted-foreground">没有匹配的 Skill / MCP</div>
+      {!loading && visibleSkills.length === 0 && (
+        <div className="px-3 py-3 text-center text-xs text-muted-foreground">没有匹配的 Skill</div>
       )}
     </div>
   );

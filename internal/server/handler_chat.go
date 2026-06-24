@@ -39,10 +39,9 @@ type chatRequest struct {
 	ToolsEnabled *bool    `json:"tools_enabled"`
 	UseRAG       *bool    `json:"use_rag"`
 	ProviderID   *string  `json:"provider_id"`    // optional override; falls back to session's provider
-	PlanMode     *bool    `json:"plan_mode"`      // 本次会话临时开启「计划模式」（只读 + 产出计划）
-	SkillIDs     []string `json:"skill_ids"`      // 本次临时勾选的 skill id（替代全局 enabled）
-	MCPServerIDs []string `json:"mcp_server_ids"` // 本次临时限定只使用的 MCP server id
-	Attachments  []string `json:"attachments"`    // @ 选中的文件/文件夹相对路径(workdir 下)
+	PlanMode    *bool    `json:"plan_mode"`   // 本次会话临时开启「计划模式」（只读 + 产出计划）
+	SkillIDs    []string `json:"skill_ids"`   // 本次临时勾选的 skill id（替代全局 enabled）
+	Attachments []string `json:"attachments"` // @ 选中的文件/文件夹相对路径(workdir 下)
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -159,9 +158,9 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		planMode = *req.PlanMode
 	}
 
-	// 按请求构建工具引擎：把 MCP 挂到内置工具引擎之上。当请求指定了 mcp_server_ids
-	// 时只暴露这些 server 的工具（临时限定）；否则暴露全部已启用 MCP。
-	chatEngine := mcp.AttachToEngine(h.Engine, h.MCP, req.MCPServerIDs)
+	// 把全部已启用 MCP 挂到内置工具引擎之上。MCP 由设置页全局配置，配置后自动可用、
+	// 模型自动调用——不再支持按对话勾选（对齐 Cursor/Windsurf/Trae 的主流设计）。
+	chatEngine := mcp.AttachToEngine(h.Engine, h.MCP, nil)
 	a := agent.New(agent.Deps{
 		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills,
 		MaxToolCalls: toolLimitSetting(h.DB),

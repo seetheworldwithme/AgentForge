@@ -25,7 +25,6 @@ interface SessionState {
       kb_id?: string;
       plan_mode?: boolean;
       skill_ids?: string[];
-      mcp_server_ids?: string[];
       attachments?: string[];
     },
   ) => Promise<void>;

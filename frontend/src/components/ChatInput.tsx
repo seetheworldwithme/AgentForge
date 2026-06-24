@@ -7,7 +7,7 @@ import { api } from '../lib/api';
 import { Icon, type IconName } from './Icon';
 import { SlashMenu, type SlashMenuHandle } from './SlashMenu';
 import { FileMenu, type FileMenuHandle } from './FileMenu';
-import type { Skill, MCPServer } from '../types';
+import type { Skill } from '../types';
 
 export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [text, setText] = useState('');
@@ -20,12 +20,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   // 斜杠菜单的临时勾选状态：仅本次会话生效，切换会话时重置（见下方 effect）。
   const [planMode, setPlanMode] = useState(false);
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
-  const [mcpIDs, setMcpIDs] = useState<string[]>([]);
   // @ 选中的文件/文件夹:{path,is_dir}。发送时只取 path 数组传给后端注入。
   const [attachments, setAttachments] = useState<{ path: string; is_dir: boolean }[]>([]);
-  // skills/mcp 列表：用于菜单展示与 chip 名称查找；菜单打开前即加载。
+  // skills 列表：用于菜单展示与 chip 名称查找；菜单打开前即加载。
   const [skills, setSkills] = useState<Skill[] | null>(null);
-  const [mcps, setMcps] = useState<MCPServer[] | null>(null);
   const menuRef = useRef<SlashMenuHandle>(null);
   const fileMenuRef = useRef<FileMenuHandle>(null);
   const send = useSessionStore((s) => s.send);
@@ -83,20 +81,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     };
   }, [workDir]);
 
-  // mcp 列表与工作目录无关（配置在全局 ~/.agent/mcp.json），挂载时加载一次即可。
-  useEffect(() => {
-    let alive = true;
-    api.listMCPServers().then((m) => alive && setMcps(m)).catch(() => alive && setMcps([]));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
   // 切换会话时清空临时勾选状态（实现「本次会话临时生效」语义）。
   useEffect(() => {
     setPlanMode(false);
     setSkillIDs([]);
-    setMcpIDs([]);
     setAttachments([]);
   }, [sessionId]);
 
@@ -136,7 +124,6 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       kb_id: kbId,
       plan_mode: planMode,
       skill_ids: skillIDs,
-      mcp_server_ids: mcpIDs,
       attachments: attachments.map((a) => a.path),
     });
     setText('');
@@ -159,10 +146,6 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     setSkillIDs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
     setText('');
   };
-  const toggleMCP = (id: string) => {
-    setMcpIDs((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
-    setText('');
-  };
   // @ 选中文件/文件夹:加入附件并清空触发文本(`@xxx`),菜单随之关闭;可再次输入 `@` 多选。
   const selectFile = (path: string, is_dir: boolean) => {
     setAttachments((cur) => (cur.some((a) => a.path === path) ? cur : [...cur, { path, is_dir }]));
@@ -171,7 +154,6 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
 
   // chip 名称：优先用已加载列表里的 name，回退到 id 片段。
   const skillName = (id: string) => skills?.find((s) => s.id === id)?.name ?? id.split(':').pop() ?? id;
-  const mcpName = (id: string) => mcps?.find((m) => m.id === id)?.name ?? id;
 
   const ragOn = !!kbId && useRag;
 
@@ -210,12 +192,9 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             query={slashQuery}
             planMode={planMode}
             skillIDs={skillIDs}
-            mcpIDs={mcpIDs}
             skills={skills}
-            mcps={mcps}
             onTogglePlan={togglePlan}
             onToggleSkill={toggleSkill}
-            onToggleMCP={toggleMCP}
             onClose={() => setText('')}
           />
         )}
@@ -301,8 +280,8 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           </div>
         </div>
 
-        {/* 已勾选的能力：计划模式 / Skills / MCP / 附件，点击 × 移除 */}
-        {(planMode || skillIDs.length > 0 || mcpIDs.length > 0 || attachments.length > 0) && (
+        {/* 已勾选的能力：计划模式 / Skills / 附件，点击 × 移除 */}
+        {(planMode || skillIDs.length > 0 || attachments.length > 0) && (
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
             {planMode && <Chip icon="file-text" label="计划模式" onRemove={() => setPlanMode(false)} />}
             {skillIDs.map((id) => (
@@ -311,14 +290,6 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
                 icon="sparkles"
                 label={skillName(id)}
                 onRemove={() => setSkillIDs((c) => c.filter((x) => x !== id))}
-              />
-            ))}
-            {mcpIDs.map((id) => (
-              <Chip
-                key={id}
-                icon="wrench"
-                label={mcpName(id)}
-                onRemove={() => setMcpIDs((c) => c.filter((x) => x !== id))}
               />
             ))}
             {attachments.map((a) => (
