@@ -44,6 +44,15 @@ func formatEntry(e Entry) string {
 
 const fmOpen = "---\n"
 
+// hasFrontmatter 判断 raw 是否含合法 frontmatter（与 parseEntry 的采纳条件一致），
+// 用于扫描时过滤无 frontmatter 的垃圾文件。要求以 "---\n" 开头且存在结束分隔 "\n---"。
+func hasFrontmatter(raw string) bool {
+	if !strings.HasPrefix(raw, fmOpen) {
+		return false
+	}
+	return strings.Index(raw[len(fmOpen):], "\n---") >= 0
+}
+
 // parseEntry 解析 .md 文件内容为 Entry。frontmatter 仅支持扁平 key: value；
 // 无 frontmatter 时视为纯正文，Name 取参数传入。
 func parseEntry(name, raw string) (Entry, error) {
