@@ -229,6 +229,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		KBID:         sess.KBID,
 		UserMessage:  req.Message,
 		UserImages:   toImageRefs(req.Images),
+		Vision:       prov.Vision,
 		PlanMode:     planMode,
 		SkillIDs:     req.SkillIDs,
 	})

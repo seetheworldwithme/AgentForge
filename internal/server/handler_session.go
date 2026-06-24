@@ -40,6 +40,23 @@ type sessionDTO struct {
 	WorkDir      string `json:"workdir"`
 }
 
+// messageDTO 是下发给前端的单条消息视图。Images 在存储层是 JSON 字符串（SQLite TEXT
+// 列），这里解析为 []string，避免前端拿到字符串后对它调用 .map 而崩溃白屏。
+type messageDTO struct {
+	ID         string   `json:"id"`
+	SessionID  string   `json:"session_id"`
+	Role       string   `json:"role"`
+	Content    string   `json:"content"`
+	Thinking   string   `json:"thinking,omitempty"`
+	Images     []string `json:"images,omitempty"`
+	ToolCalls  string   `json:"tool_calls,omitempty"`
+	ToolCallID string   `json:"tool_call_id,omitempty"`
+	Citations  string   `json:"citations,omitempty"`
+	TokensIn   int      `json:"tokens_in,omitempty"`
+	TokensOut  int      `json:"tokens_out,omitempty"`
+	CreatedAt  string   `json:"created_at"`
+}
+
 func (h *SessionHandler) list(w http.ResponseWriter, r *http.Request) {
 	ss, err := h.DB.ListSessions()
 	if err != nil {
@@ -155,7 +172,7 @@ func (h *SessionHandler) currentWorkDir() string {
 	return ""
 }
 
-func messagesForDisplay(msgs []store.Message) []store.Message {
+func messagesForDisplay(msgs []store.Message) []messageDTO {
 	results := make(map[string]store.Message)
 	for _, m := range msgs {
 		if m.Role == "tool" && m.ToolCallID != "" {
@@ -163,13 +180,13 @@ func messagesForDisplay(msgs []store.Message) []store.Message {
 		}
 	}
 
-	out := make([]store.Message, 0, len(msgs))
+	out := make([]messageDTO, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role == "tool" && m.ToolCallID != "" {
 			continue
 		}
 		if m.Role != "assistant" || strings.TrimSpace(m.ToolCalls) == "" {
-			out = append(out, m)
+			out = append(out, toMessageDTO(m))
 			continue
 		}
 
@@ -177,7 +194,7 @@ func messagesForDisplay(msgs []store.Message) []store.Message {
 		if strings.TrimSpace(m.Content) != "" {
 			cp := m
 			cp.ToolCalls = ""
-			out = append(out, cp)
+			out = append(out, toMessageDTO(cp))
 		}
 		for _, tc := range calls {
 			toolMsg := store.Message{
@@ -188,10 +205,27 @@ func messagesForDisplay(msgs []store.Message) []store.Message {
 				ToolCallID: tc.ID,
 				CreatedAt:  m.CreatedAt,
 			}
-			out = append(out, toolMsg)
+			out = append(out, toMessageDTO(toolMsg))
 		}
 	}
 	return out
+}
+
+// toMessageDTO 把 store.Message 转为前端 DTO：Images（存储为 JSON 字符串）解析为 []string。
+func toMessageDTO(m store.Message) messageDTO {
+	dto := messageDTO{
+		ID: m.ID, SessionID: m.SessionID, Role: m.Role, Content: m.Content,
+		Thinking: m.Thinking, ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID,
+		Citations: m.Citations, TokensIn: m.TokensIn, TokensOut: m.TokensOut,
+		CreatedAt: m.CreatedAt,
+	}
+	if s := strings.TrimSpace(m.Images); s != "" {
+		var imgs []string
+		if json.Unmarshal([]byte(s), &imgs) == nil {
+			dto.Images = imgs
+		}
+	}
+	return dto
 }
 
 func decodeStoredToolCalls(raw string) []llm.ToolCall {

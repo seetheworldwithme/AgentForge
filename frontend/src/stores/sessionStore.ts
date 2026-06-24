@@ -52,6 +52,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   loadSessions: async () => set({ sessions: await api.listSessions() }),
 
   select: async (id) => {
+    // 切换会话前终止可能仍在进行的流式输出，避免旧会话事件污染新会话、
+    // 以及 streaming 状态卡住导致切回后界面异常（如白屏）。
+    if (get().streaming) {
+      get().abortController?.abort();
+      set({ streaming: false, abortController: null });
+    }
     set({ currentId: id });
     const res = await api.getSession(id);
     set({ messages: res.messages ?? [] });

@@ -552,3 +552,26 @@ func TestRunEmitsThinkingFromReasoning(t *testing.T) {
 		t.Fatalf("expected delta + done alongside thinking; got %v", rec.events)
 	}
 }
+
+// TestIsImageOCRTool 验证图片识别 / OCR 类 MCP 工具的判定：视觉模型 + 含图片时这些
+// 工具会被屏蔽，但联网搜图、生成图等不应被误伤。
+func TestIsImageOCRTool(t *testing.T) {
+	cases := map[string]bool{
+		"mcp__zai-mcp-server__extract_text_from_screenshot": true,
+		"mcp__foo__ocr":              true,
+		"mcp__bar__describe_image":   true,
+		"mcp__baz__image_to_text":    true,
+		"mcp__qux__read_screenshot":  true,
+		"mcp__web__search":           false,
+		"mcp__web__fetch":            false,
+		"mcp__gen__image_generation": false,
+		"mcp__search__image_search":  false,
+		"file_read":                  false,
+		"bash":                       false,
+	}
+	for name, want := range cases {
+		if got := isImageOCRTool(name); got != want {
+			t.Errorf("isImageOCRTool(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

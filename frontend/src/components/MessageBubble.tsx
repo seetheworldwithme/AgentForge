@@ -154,8 +154,8 @@ export function MessageBubble({
             {isUser ? content : <MarkdownMessage content={content} />}
           </div>
         )}
-        {/* 用户消息附带的图片缩略图 */}
-        {isUser && m.images && m.images.length > 0 && (
+        {/* 用户消息附带的图片缩略图（Array.isArray 防御：历史数据 images 可能是字符串） */}
+        {isUser && Array.isArray(m.images) && m.images.length > 0 && (
           <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
             {m.images.map((src, idx) => (
               <img
