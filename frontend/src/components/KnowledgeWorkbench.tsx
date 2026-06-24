@@ -143,7 +143,7 @@ export function KnowledgeWorkbench() {
   return (
     <div className="flex h-full flex-1 bg-background text-foreground">
       {/* 左：知识库列表 */}
-      <aside className="flex w-72 flex-col border-r border-border bg-muted/30 p-4">
+      <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-muted/30 p-4">
         <div className="mb-4 flex items-start justify-between">
           <div>
             <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
@@ -305,7 +305,7 @@ export function KnowledgeWorkbench() {
         </section>
 
         {/* 右：配置 / 预览 / 召回 */}
-        <aside className="w-[380px] overflow-y-auto border-l border-border bg-muted/30 p-5">
+        <aside className="w-[380px] shrink-0 overflow-y-auto border-l border-border bg-muted/30 p-5">
           {active && (
             <div className="space-y-6">
               <section>
@@ -578,7 +578,7 @@ function ChunkBlock({ ordinal, text }: { ordinal: number; text: string }) {
       <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
         chunk {ordinal}
       </div>
-      <div className="max-h-28 overflow-y-auto whitespace-pre-wrap font-mono text-xs leading-5 text-foreground/80">
+      <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-all font-mono text-xs leading-5 text-foreground/80">
         {text}
       </div>
     </div>

@@ -177,7 +177,7 @@ export function ProviderSettings() {
     // 尝试匹配已有厂商
     const matched = VENDORS.find((v) => v.base_url === p.base_url);
     setVendorKey(matched ? matched.key : 'custom');
-    setCategory(p.embed_model ? 'embed' : 'chat');
+    setCategory(p.kind === 'embed' ? 'embed' : 'chat');
     setModalOpen(true);
   };
 
