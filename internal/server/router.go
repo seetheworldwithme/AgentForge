@@ -6,6 +6,7 @@ import (
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/mcp"
+	"github.com/agent-rust/core/internal/memory"
 	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
@@ -24,6 +25,7 @@ type Deps struct {
 	Skills      *skills.Manager    // optional; nil disables skill injection
 	MCP         *mcp.Manager       // optional; nil disables MCP tools/settings
 	WorkDir     *tools.WorkDir     // optional; shared cwd for filesystem tools
+	Memory      *memory.MemoryStore // optional; nil disables memory feature
 	UploadDir   string             // optional; defaults to OS temp dir
 }
 
@@ -53,12 +55,22 @@ func NewRouter(d Deps) http.Handler {
 	r.Route("/api", func(r chi.Router) {
 		(&ConfigHandler{DB: d.DB}).Routes(r)
 		(&SessionHandler{DB: d.DB, WorkDir: d.WorkDir}).Routes(r)
-		(&ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath, WorkDir: d.WorkDir}).Routes(r)
+		// 注意：Memory 是 agent.MemoryProvider 接口，直接传 *memory.MemoryStore 的 nil
+		// 会得到「非 nil 接口包裹 nil 指针」，导致 agent.Run 误判已启用。故仅当具体值
+		// 非 nil 时才赋值，保持 nil 接口语义。
+		chat := &ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath, WorkDir: d.WorkDir}
+		if d.Memory != nil {
+			chat.Memory = d.Memory
+		}
+		chat.Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&SkillsHandler{Manager: d.Skills}).Routes(r)
 		(&MCPHandler{Manager: d.MCP}).Routes(r)
+		if d.Memory != nil {
+			(&MemoryHandler{Store: d.Memory}).Routes(r)
+		}
 	})
 	return r
 }

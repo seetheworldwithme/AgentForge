@@ -28,6 +28,7 @@ type ChatHandler struct {
 	Skills        agent.SkillProvider // optional; nil disables skills
 	MCPConfigPath string
 	WorkDir       *tools.WorkDir // optional; nil disables @ file-attachment injection
+	Memory        agent.MemoryProvider // optional; nil disables memory injection
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -162,7 +163,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	// 模型自动调用——不再支持按对话勾选（对齐 Cursor/Windsurf/Trae 的主流设计）。
 	chatEngine := mcp.AttachToEngine(h.Engine, h.MCP, nil)
 	a := agent.New(agent.Deps{
-		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills,
+		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills, Memory: h.Memory,
 		MaxToolCalls: toolLimitSetting(h.DB),
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)

@@ -25,6 +25,7 @@ import (
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/mcp"
+	"github.com/agent-rust/core/internal/memory"
 	"github.com/agent-rust/core/internal/rag"
 	"github.com/agent-rust/core/internal/server"
 	"github.com/agent-rust/core/internal/skills"
@@ -51,10 +52,13 @@ func main() {
 
 	gate := tools.NewGate()
 	workDir := tools.NewWorkDir()
-	registry := tools.NewRegistry(
+	memStore := memory.New(workDir.Get, *dataDir)
+	allTools := []tools.Tool{
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
 		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
-	)
+	}
+	allTools = append(allTools, memory.Tools(memStore)...)
+	registry := tools.NewRegistry(allTools...)
 	mcpManager := mcp.NewManager(db)
 	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
 	// 纯内置工具引擎；MCP 按请求在 ChatHandler 内 attach（支持临时限定 server）。
@@ -75,6 +79,7 @@ func main() {
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: baseEngine,
 		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
+		Memory: memStore,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 
