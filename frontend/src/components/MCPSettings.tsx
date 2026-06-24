@@ -120,7 +120,7 @@ export function MCPSettings() {
         <div className="min-w-0">
           <div className="text-sm font-medium text-foreground">MCP 服务</div>
           <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-            {configPath || '~/.agent/mcp.json'}
+            {configPath || '~/.agentforge/mcp.json'}
           </div>
         </div>
         <div className="flex items-center gap-2">

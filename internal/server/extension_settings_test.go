@@ -23,7 +23,7 @@ func TestSkillsSettingsEndpoints(t *testing.T) {
 	defer db.Close()
 
 	root := t.TempDir()
-	writeTestSkill(t, filepath.Join(root, ".agent", "skills", "demo", "SKILL.md"))
+	writeTestSkill(t, filepath.Join(root, ".agentforge", "skills", "demo", "SKILL.md"))
 	manager := skills.NewManager(skills.Options{DB: db, GlobalRoot: root})
 	router := NewRouter(Deps{DB: db, Skills: manager})
 

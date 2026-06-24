@@ -123,3 +123,44 @@ func TestEmbed(t *testing.T) {
 		t.Errorf("vecs = %+v, want 1 vector of dim 3", vecs)
 	}
 }
+
+// TestChatStreamParsesReasoning 验证推理模型的思考过程（reasoning_content / reasoning
+// 两字段都兼容）被解析为 Chunk.Reasoning，且不混入正文 Text。
+func TestChatStreamParsesReasoning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		lines := []string{
+			`data: {"choices":[{"delta":{"reasoning_content":"让我想想"}}]}`,
+			`data: {"choices":[{"delta":{"reasoning":"…答案是"}}]}`,
+			`data: {"choices":[{"delta":{"content":"42"}}]}`,
+			`data: [DONE]`,
+		}
+		for _, l := range lines {
+			_, _ = w.Write([]byte(l + "\n\n"))
+			f.Flush()
+		}
+	}))
+	defer srv.Close()
+
+	c := NewOpenAIClient(Config{BaseURL: srv.URL, APIKey: "test", Model: "m"})
+	ch, err := c.ChatStream(context.Background(), []Message{{Role: RoleUser, Content: "终极问题"}}, nil)
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	var text, reasoning strings.Builder
+	for chunk := range ch {
+		if chunk.Text != "" {
+			text.WriteString(chunk.Text)
+		}
+		if chunk.Reasoning != "" {
+			reasoning.WriteString(chunk.Reasoning)
+		}
+	}
+	if reasoning.String() != "让我想想…答案是" {
+		t.Errorf("reasoning = %q, want %q", reasoning.String(), "让我想想…答案是")
+	}
+	if text.String() != "42" {
+		t.Errorf("text = %q, want %q（reasoning 不得混入正文）", text.String(), "42")
+	}
+}

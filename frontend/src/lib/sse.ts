@@ -13,6 +13,8 @@ export async function streamChat(
     plan_mode?: boolean;
     skill_ids?: string[];
     attachments?: string[];
+    images?: string[];
+    regenerate?: boolean;
   },
   onEvent: (e: ChatEvent) => void,
   signal?: AbortSignal,

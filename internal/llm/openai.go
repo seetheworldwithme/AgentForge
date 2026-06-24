@@ -177,7 +177,9 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 			var ev struct {
 				Choices []struct {
 					Delta struct {
-						Content   string `json:"content"`
+						Content          string `json:"content"`
+						ReasoningContent string `json:"reasoning_content"`
+						Reasoning        string `json:"reasoning"`
 						ToolCalls []struct {
 							Index    int    `json:"index"`
 							ID       string `json:"id"`
@@ -199,6 +201,13 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 			for _, choice := range ev.Choices {
 				if choice.Delta.Content != "" {
 					ch <- Chunk{Text: choice.Delta.Content}
+				}
+				// 推理模型的思考过程：reasoning_content（DeepSeek-R1/Qwen3/GLM 等）优先，
+				// 回退 reasoning（部分自建网关用此字段）。仅透传思考，不混入正文 Text。
+				if rc := choice.Delta.ReasoningContent; rc != "" {
+					ch <- Chunk{Reasoning: rc}
+				} else if r := choice.Delta.Reasoning; r != "" {
+					ch <- Chunk{Reasoning: r}
 				}
 				for _, tc := range choice.Delta.ToolCalls {
 					a, ok := pending[tc.Index]

@@ -118,6 +118,7 @@ const EMPTY = {
   chat_model: 'gpt-4o-mini',
   embed_model: 'text-embedding-3-small',
   is_default: true,
+  vision: false,
 };
 
 type Form = typeof EMPTY;
@@ -172,6 +173,7 @@ export function ProviderSettings() {
       chat_model: p.chat_model,
       embed_model: p.embed_model ?? '',
       is_default: p.is_default,
+      vision: p.vision ?? false,
     });
     setStatus({ kind: 'idle' });
     // 尝试匹配已有厂商
@@ -283,6 +285,15 @@ export function ProviderSettings() {
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-foreground">{p.name}</span>
                     <KindBadge kind={p.kind} />
+                    {p.vision && (
+                      <span
+                        className="status-pill bg-primary/10 text-primary"
+                        title="视觉模型，支持粘贴图片"
+                      >
+                        <Icon name="image" size={11} className="mr-0.5" />
+                        视觉
+                      </span>
+                    )}
                     {p.is_default && (
                       <span className="status-pill bg-primary/10 text-primary">默认</span>
                     )}
@@ -315,7 +326,19 @@ export function ProviderSettings() {
       {modalOpen && (
         <div
           className="fixed inset-0 z-[60] flex animate-fade-in items-center justify-center bg-black/40 backdrop-blur-sm"
-          onClick={closeModal}
+          onMouseDown={(e) => {
+            // 记录鼠标按下时的目标：只有在遮罩本身按下、并在遮罩本身抬起时，
+            // 才算"点击遮罩关闭"。在输入框内拖选文字超出弹窗边界导致的
+            // mouseup 落到遮罩上，因为按下点不在遮罩，会被忽略，避免误关弹窗。
+            if (e.target === e.currentTarget) e.currentTarget.dataset.down = '1';
+            else delete e.currentTarget.dataset.down;
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && e.currentTarget.dataset.down === '1') {
+              delete e.currentTarget.dataset.down;
+              closeModal();
+            }
+          }}
         >
           <div
             className="flex w-[520px] max-w-[92vw] animate-scale-in flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-lg"
@@ -432,6 +455,18 @@ export function ProviderSettings() {
                 />
                 设为默认（同类模型仅保留一个默认）
               </label>
+
+              {category === 'chat' && (
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-input accent-primary"
+                    checked={form.vision}
+                    onChange={(e) => setField('vision', e.target.checked)}
+                  />
+                  支持图片 / 视觉（允许在对话框粘贴图片）
+                </label>
+              )}
 
               {status.kind === 'error' && (
                 <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 p-2.5 text-sm text-destructive">

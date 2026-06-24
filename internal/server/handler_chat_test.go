@@ -16,7 +16,7 @@ func TestStoreMsgToLLMRestoresToolCalls(t *testing.T) {
 		Content:   "let me read the file",
 		ToolCalls: `[{"id":"call_1","name":"file_read","args":"{\"path\":\"/a/b.txt\"}"}]`,
 	}
-	got := storeMsgToLLM(m)
+	got := storeMsgToLLM(m, false)
 	if len(got.ToolCalls) != 1 {
 		t.Fatalf("expected 1 tool call restored, got %d", len(got.ToolCalls))
 	}
@@ -36,7 +36,7 @@ func TestStoreMsgToLLMRestoresToolCalls(t *testing.T) {
 // 不会因空字符串报错，也不会产生幽灵 tool call。
 func TestStoreMsgToLLMEmptyToolCalls(t *testing.T) {
 	for _, raw := range []string{"", "  ", "[]"} {
-		got := storeMsgToLLM(store.Message{Role: "user", Content: "hi", ToolCalls: raw})
+		got := storeMsgToLLM(store.Message{Role: "user", Content: "hi", ToolCalls: raw}, false)
 		if len(got.ToolCalls) != 0 {
 			t.Errorf("ToolCalls=%q produced %d calls, want 0", raw, len(got.ToolCalls))
 		}
@@ -47,11 +47,32 @@ func TestStoreMsgToLLMEmptyToolCalls(t *testing.T) {
 // 的 tool_call_id 仍被正确保留（该字段之前就有，此处做回归保护）。
 func TestStoreMsgToLLMToolRolePreservesToolCallID(t *testing.T) {
 	m := store.Message{Role: "tool", Content: "result", ToolCallID: "call_1"}
-	got := storeMsgToLLM(m)
+	got := storeMsgToLLM(m, false)
 	if got.ToolCallID != "call_1" {
 		t.Errorf("tool_call_id = %q, want call_1", got.ToolCallID)
 	}
 	if len(got.ToolCalls) != 0 {
 		t.Errorf("tool role should have no ToolCalls, got %d", len(got.ToolCalls))
+	}
+}
+
+// TestStoreMsgToLLMRestoresImagesWhenVision 验证当前模型支持视觉时，
+// 历史用户消息的图片（JSON dataURL 数组）被回填为多模态 ImageRef；
+// 非 vision 模型则不回填——避免纯文本模型续聊带图历史被 provider 以 400 拒绝。
+func TestStoreMsgToLLMRestoresImagesWhenVision(t *testing.T) {
+	urls := `["data:image/png;base64,AAAA","data:image/png;base64,BBBB"]`
+	m := store.Message{Role: "user", Content: "看这张图", Images: urls}
+
+	got := storeMsgToLLM(m, true)
+	if len(got.Images) != 2 {
+		t.Fatalf("vision=true expected 2 images, got %d", len(got.Images))
+	}
+	if got.Images[0].DataURL != "data:image/png;base64,AAAA" {
+		t.Errorf("first image DataURL = %q", got.Images[0].DataURL)
+	}
+
+	plain := storeMsgToLLM(m, false)
+	if len(plain.Images) != 0 {
+		t.Errorf("vision=false expected 0 images, got %d", len(plain.Images))
 	}
 }

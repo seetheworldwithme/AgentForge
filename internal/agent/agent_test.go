@@ -531,3 +531,24 @@ func TestRunNoToolsReturnsNotAvailable(t *testing.T) {
 		t.Errorf("tool_result content=%v, want 'no tools available'", res["content"])
 	}
 }
+
+// TestRunEmitsThinkingFromReasoning 验证推理模型的 Chunk.Reasoning 被转发为 thinking 事件，
+// 正文照常以 delta 输出（思考过程不阻断正文）。
+func TestRunEmitsThinkingFromReasoning(t *testing.T) {
+	m := &fakeLLM{scripts: [][]llm.Chunk{
+		{{Reasoning: "先思考"}, {Reasoning: "再想想"}, {Text: "答案"}, {Done: true}},
+	}}
+	rec := &recorderEmitter{}
+	a := New(Deps{LLM: m, MaxIter: 5})
+	a.Run(context.Background(), RunInput{
+		History: []llm.Message{{Role: llm.RoleUser, Content: "问"}},
+		Emit:    rec,
+	})
+	joined := join(rec.events)
+	if !contains(joined, "thinking") {
+		t.Fatalf("expected thinking event for reasoning chunk; got %v", rec.events)
+	}
+	if !contains(joined, "delta") || !contains(joined, "done") {
+		t.Fatalf("expected delta + done alongside thinking; got %v", rec.events)
+	}
+}

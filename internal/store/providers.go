@@ -8,6 +8,7 @@ type Provider struct {
 	ChatModel  string
 	EmbedModel string
 	Kind       string // 'chat' | 'embed'；空串视为 chat（向后兼容）
+	Vision     bool   // 视觉(VL)模型：允许粘贴图片
 	IsDefault  bool
 	CreatedAt  string
 	UpdatedAt  string
@@ -15,21 +16,21 @@ type Provider struct {
 
 func (d *DB) CreateProvider(p Provider) error {
 	_, err := d.sql.Exec(`INSERT INTO providers
-		(id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		(id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.BaseURL, p.APIKey, p.ChatModel, nullable(p.EmbedModel), nullable(p.Kind),
-		boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
+		boolToText(p.Vision), boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (d *DB) GetProvider(id string) (Provider, error) {
-	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at
+	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
 		FROM providers WHERE id=?`, id)
 	return scanProvider(row)
 }
 
 func (d *DB) ListProviders() ([]Provider, error) {
-	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at
+	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
 		FROM providers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -59,7 +60,7 @@ func normalizeKind(kind string) string {
 // provider。chat 匹配 kind 为 NULL/''/'chat' 的行；embed 匹配 kind='embed'。
 // 没有默认时返回 sql.ErrNoRows。
 func (d *DB) GetDefaultProviderByKind(kind string) (Provider, error) {
-	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at
+	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
 		FROM providers WHERE is_default=1 `
 	if normalizeKind(kind) == "embed" {
 		q += `AND kind='embed' `
@@ -117,15 +118,17 @@ func scanProvider(s scanner) (Provider, error) {
 	var p Provider
 	var embedModel *string
 	var kind *string
+	var vision *string
 	var isDefault int
 	err := s.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKey, &p.ChatModel,
-		&embedModel, &kind, &isDefault, &p.CreatedAt, &p.UpdatedAt)
+		&embedModel, &kind, &vision, &isDefault, &p.CreatedAt, &p.UpdatedAt)
 	if embedModel != nil {
 		p.EmbedModel = *embedModel
 	}
 	if kind != nil {
 		p.Kind = *kind
 	}
+	p.Vision = vision != nil && *vision == "1"
 	p.IsDefault = isDefault != 0
 	return p, err
 }
@@ -142,4 +145,13 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// boolToText 把布尔序列化为可空文本：true → "1"，false → nil（NULL）。
+// 用于 vision 等「是/否」语义的 TEXT 列，与 scanProvider 的 *string 解析配套。
+func boolToText(b bool) any {
+	if b {
+		return "1"
+	}
+	return nil
 }

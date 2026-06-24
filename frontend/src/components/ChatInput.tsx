@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type SelectHTMLAttributes } from 'react';
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type SelectHTMLAttributes } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
@@ -22,6 +22,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [skillIDs, setSkillIDs] = useState<string[]>([]);
   // @ 选中的文件/文件夹:{path,is_dir}。发送时只取 path 数组传给后端注入。
   const [attachments, setAttachments] = useState<{ path: string; is_dir: boolean }[]>([]);
+  // 粘贴的图片 dataURL（仅当前模型支持视觉时允许）；切换到纯文本模型时自动清空。
+  const [images, setImages] = useState<string[]>([]);
+  // 非 vision 模型粘贴图片 / 超出张数时的内联提示（自动清除）。
+  const [pasteHint, setPasteHint] = useState('');
   // skills 列表：用于菜单展示与 chip 名称查找；菜单打开前即加载。
   const [skills, setSkills] = useState<Skill[] | null>(null);
   const menuRef = useRef<SlashMenuHandle>(null);
@@ -125,8 +129,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
       plan_mode: planMode,
       skill_ids: skillIDs,
       attachments: attachments.map((a) => a.path),
+      images,
     });
     setText('');
+    setImages([]);
   };
 
   // 斜杠菜单：仅当输入以 `/` 开头时打开，`/` 之后的内容作为过滤词。
@@ -156,6 +162,54 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const skillName = (id: string) => skills?.find((s) => s.id === id)?.name ?? id.split(':').pop() ?? id;
 
   const ragOn = !!kbId && useRag;
+
+  // 当前选中的对话模型是否支持视觉（粘贴图片）。
+  const currentProvider = chatProviders.find((p) => p.id === providerId);
+  const visionEnabled = !!currentProvider?.vision;
+
+  // 切换到不支持图片的模型时，清空已粘贴的图片并提示。
+  useEffect(() => {
+    if (!visionEnabled && images.length > 0) {
+      setImages([]);
+      setPasteHint('已切换到纯文本模型，图片已移除');
+      const t = window.setTimeout(() => setPasteHint(''), 3000);
+      return () => window.clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visionEnabled]);
+
+  // 粘贴图片：仅视觉模型允许；非视觉模型阻止并提示。图片经 canvas 压缩后入列（上限 4 张）。
+  const onPaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageItems = Array.from(items).filter(
+      (it) => it.kind === 'file' && it.type.startsWith('image/'),
+    );
+    if (imageItems.length === 0) return; // 非图片粘贴，交由默认行为
+    e.preventDefault();
+    const flash = (msg: string) => {
+      setPasteHint(msg);
+      window.setTimeout(() => setPasteHint(''), 3000);
+    };
+    if (!visionEnabled) {
+      flash(`当前模型「${currentProvider?.chat_model ?? ''}」不支持图片，无法粘贴`);
+      return;
+    }
+    if (images.length >= 4) {
+      flash('最多粘贴 4 张图片');
+      return;
+    }
+    for (const it of imageItems) {
+      const file = it.getAsFile();
+      if (!file) continue;
+      if (images.length >= 4) {
+        flash('最多粘贴 4 张图片');
+        break;
+      }
+      const url = await compressImage(file);
+      setImages((cur) => (cur.length >= 4 ? cur : [...cur, url]));
+    }
+  };
 
   // 打开目录选择对话框
   const pickDirectory = async () => {
@@ -303,6 +357,37 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           </div>
         )}
 
+        {/* 粘贴的图片预览：缩略图 + 移除按钮 */}
+        {images.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
+            {images.map((src, idx) => (
+              <div key={idx} className="relative">
+                <img
+                  src={src}
+                  alt={`图片 ${idx + 1}`}
+                  loading="lazy"
+                  className="h-14 w-14 rounded-lg border border-border object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => setImages((cur) => cur.filter((_, i) => i !== idx))}
+                  className="absolute -right-1.5 -top-1.5 grid h-5 w-5 place-items-center rounded-full border border-border bg-card text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label="移除图片"
+                >
+                  <Icon name="x" size={11} strokeWidth={2.4} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {pasteHint && (
+          <div className="flex items-center gap-1.5 px-2.5 pt-2 text-xs text-amber-600 dark:text-amber-400">
+            <Icon name="alert-circle" size={12} className="shrink-0" />
+            {pasteHint}
+          </div>
+        )}
+
         {/* 输入行 */}
         <div className="flex items-end gap-2 px-2.5 pb-2.5 pt-1.5">
           <textarea
@@ -310,6 +395,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
             rows={2}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onPaste={onPaste}
             onKeyDown={(e) => {
               // IME（中文输入法）组合期间的按键（如选词回车）交由输入法处理：
               // 既不触发斜杠菜单选中，也不发送——否则打中文时按回车会在候选词上屏的
@@ -507,4 +593,39 @@ function Chip({ icon, label, onRemove }: { icon: IconName; label: string; onRemo
       </button>
     </span>
   );
+}
+
+// compressImage 用 canvas 把图片重绘到最长边 ≤ maxEdge、输出 dataURL，
+// 控制单张体积避免 base64 撑爆请求体与数据库；任何环节失败都回退原始 dataURL。
+async function compressImage(file: File, maxEdge = 1568, quality = 0.82): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result as string);
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(file);
+  });
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = reject;
+      i.src = dataUrl;
+    });
+    let { width, height } = img;
+    if (width > maxEdge || height > maxEdge) {
+      const scale = maxEdge / Math.max(width, height);
+      width = Math.round(width * scale);
+      height = Math.round(height * scale);
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return dataUrl;
+    ctx.drawImage(img, 0, 0, width, height);
+    // PNG（可能含透明度）保留 PNG，其余统一 JPEG 压缩。
+    return file.type === 'image/png' ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', quality);
+  } catch {
+    return dataUrl;
+  }
 }

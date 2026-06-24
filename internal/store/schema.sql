@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS providers (
     chat_model  TEXT NOT NULL,
     embed_model TEXT,
     kind        TEXT, -- 'chat' | 'embed'；NULL 视为 chat（向后兼容老数据）
+    vision      TEXT, -- '1' = 视觉(VL)模型，允许粘贴图片；NULL/'' = 纯文本
     is_default  INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
@@ -38,6 +39,8 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls   TEXT,
     tool_call_id TEXT,
     citations    TEXT,
+    thinking     TEXT, -- 推理模型的思考过程（reasoning_content），仅用于展示，不回传给模型
+    images       TEXT, -- 用户消息的图片 dataURL JSON 数组（多模态）
     tokens_in    INTEGER,
     tokens_out   INTEGER,
     created_at   TEXT NOT NULL

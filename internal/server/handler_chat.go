@@ -43,6 +43,8 @@ type chatRequest struct {
 	PlanMode    *bool    `json:"plan_mode"`   // 本次会话临时开启「计划模式」（只读 + 产出计划）
 	SkillIDs    []string `json:"skill_ids"`   // 本次临时勾选的 skill id（替代全局 enabled）
 	Attachments []string `json:"attachments"` // @ 选中的文件/文件夹相对路径(workdir 下)
+	Regenerate  bool     `json:"regenerate"`  // 重新回答：截断末尾 user 之后的内容并重新生成
+	Images      []string `json:"images,omitempty"` // 用户粘贴的图片 dataURL（多模态，仅视觉模型）
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +121,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	firstMessage := len(storedMsgs) == 0
 	history := make([]llm.Message, 0, len(storedMsgs)+1)
 	for _, m := range storedMsgs {
-		history = append(history, storeMsgToLLM(m))
+		history = append(history, storeMsgToLLM(m, prov.Vision))
 	}
 	if h.MCPConfigPath != "" {
 		history = prependSystemMessage(history, "MCP server configuration is stored at "+h.MCPConfigPath+". When the user asks which MCP servers are configured, read that file directly instead of searching the filesystem.")
@@ -137,10 +139,39 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 
 	// persist user message
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	userMsgID := "msg_" + ulid.Make().String()
-	_ = h.DB.AppendMessage(store.Message{
-		ID: userMsgID, SessionID: id, Role: "user", Content: req.Message, CreatedAt: now,
-	})
+	if req.Regenerate {
+		// 重新回答：不重新持久化 user 消息，删除末尾 user 之后的所有旧回答后重新生成。
+		// 这要求历史里至少有一条 user；若没有则降级为普通发送。
+		if lu := lastUserMessage(storedMsgs); lu.ID != "" {
+			if err := h.DB.DeleteMessagesFrom(id, lu.CreatedAt); err != nil {
+				log.Printf("[Chat] regenerate truncate failed session=%s: %v", id, err)
+			}
+			history = history[:0]
+			kept, _ := h.DB.ListMessages(id)
+			for _, m := range kept {
+				history = append(history, storeMsgToLLM(m, prov.Vision))
+			}
+			// 重新回答时不重复注入标题生成（首条消息已存在）
+			req.Message = ""
+		}
+	}
+	if req.Message != "" {
+		userMsgID := "msg_" + ulid.Make().String()
+		userImages := ""
+		if len(req.Images) > 0 {
+			if b, err := json.Marshal(req.Images); err == nil {
+				userImages = string(b)
+			}
+		}
+		_ = h.DB.AppendMessage(store.Message{
+			ID: userMsgID, SessionID: id, Role: "user", Content: req.Message,
+			Images: userImages, CreatedAt: now,
+		})
+		history = append(history, llm.Message{
+			Role: llm.RoleUser, Content: req.Message, Images: toImageRefs(req.Images),
+		})
+		firstMessage = firstMessage || len(history) == 1
+	}
 
 	// emitter that records the assistant message as it streams
 	collected := &streamCollector{}
@@ -198,6 +229,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		UseRAG:       useRAG,
 		KBID:         sess.KBID,
 		UserMessage:  req.Message,
+		UserImages:   toImageRefs(req.Images),
 		PlanMode:     planMode,
 		SkillIDs:     req.SkillIDs,
 	})
@@ -224,6 +256,17 @@ func prependSystemMessage(history []llm.Message, content string) []llm.Message {
 		return out
 	}
 	return append([]llm.Message{system}, history...)
+}
+
+// lastUserMessage 返回消息列表中最后一条 user 消息；没有则返回空 Message。
+// 用于「重新回答」定位截断点：删除该 user 消息之后的所有内容。
+func lastUserMessage(msgs []store.Message) store.Message {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i]
+		}
+	}
+	return store.Message{}
 }
 
 func boolPtrForLog(v *bool) string {
@@ -333,7 +376,7 @@ var trimCutset = "\"'`.,;:!?" +
 	"「」『』《》【】（）()" +
 	"“”‘’"
 
-func storeMsgToLLM(m store.Message) llm.Message {
+func storeMsgToLLM(m store.Message, vision bool) llm.Message {
 	// 反序列化 assistant 的 tool_calls（存储为 JSON 字符串）。
 	// 之前这里漏掉了 ToolCalls，导致跨请求续聊时模型看不到自己上一轮调过
 	// 哪些工具，上下文断裂、多步任务容易卡住。
@@ -343,20 +386,50 @@ func storeMsgToLLM(m store.Message) llm.Message {
 			log.Printf("[Chat] decode tool_calls failed (msg=%s): %v", m.ID, err)
 		}
 	}
-	return llm.Message{
+	msg := llm.Message{
 		Role: llm.Role(m.Role), Content: m.Content,
 		ToolCalls: toolCalls, ToolCallID: m.ToolCallID,
 	}
+	// 仅当当前模型支持视觉时，才把历史用户图片回填为多模态 content；
+	// 否则纯文本模型续聊带图历史会被 provider 以 400 拒绝。
+	if vision && m.Role == string(llm.RoleUser) {
+		if s := strings.TrimSpace(m.Images); s != "" {
+			var urls []string
+			if err := json.Unmarshal([]byte(s), &urls); err == nil {
+				msg.Images = toImageRefs(urls)
+			}
+		}
+	}
+	return msg
+}
+
+// toImageRefs 把 dataURL 字符串切片转为多模态 ImageRef；空输入返回 nil。
+func toImageRefs(urls []string) []llm.ImageRef {
+	if len(urls) == 0 {
+		return nil
+	}
+	out := make([]llm.ImageRef, 0, len(urls))
+	for _, u := range urls {
+		if u != "" {
+			out = append(out, llm.ImageRef{DataURL: u})
+		}
+	}
+	return out
 }
 
 type streamCollector struct {
 	pendingText      strings.Builder
+	pendingThinking  strings.Builder
 	pendingToolCalls []llm.ToolCall
 	messages         []llm.Message
 }
 
 func (c *streamCollector) appendText(s string) {
 	c.pendingText.WriteString(s)
+}
+
+func (c *streamCollector) appendThinking(s string) {
+	c.pendingThinking.WriteString(s)
 }
 
 func (c *streamCollector) appendToolCall(tc llm.ToolCall) {
@@ -376,14 +449,17 @@ func (c *streamCollector) finish() []llm.Message {
 }
 
 func (c *streamCollector) flushAssistantTurn() {
-	if c.pendingText.Len() == 0 && len(c.pendingToolCalls) == 0 {
+	// 守卫须包含 pendingThinking：否则「纯思考、无正文也无工具调用」的轮次会被吞掉，思考丢失。
+	if c.pendingText.Len() == 0 && c.pendingThinking.Len() == 0 && len(c.pendingToolCalls) == 0 {
 		return
 	}
 	c.messages = append(c.messages, llm.Message{
 		Role: llm.RoleAssistant, Content: c.pendingText.String(),
+		Thinking:  c.pendingThinking.String(),
 		ToolCalls: append([]llm.ToolCall(nil), c.pendingToolCalls...),
 	})
 	c.pendingText.Reset()
+	c.pendingThinking.Reset()
 	c.pendingToolCalls = nil
 }
 
@@ -399,6 +475,12 @@ func (m *multiEmitter) Emit(event string, data any) {
 		if d, ok := data.(map[string]any); ok {
 			if t, ok := d["text"].(string); ok {
 				m.collector.appendText(t)
+			}
+		}
+	case "thinking":
+		if d, ok := data.(map[string]any); ok {
+			if t, ok := d["text"].(string); ok {
+				m.collector.appendThinking(t)
 			}
 		}
 	case "tool_call":
@@ -453,6 +535,7 @@ func llmMsgToStore(sessionID string, msg llm.Message) store.Message {
 		SessionID:  sessionID,
 		Role:       string(msg.Role),
 		Content:    msg.Content,
+		Thinking:   msg.Thinking,
 		ToolCalls:  toolCalls,
 		ToolCallID: msg.ToolCallID,
 		CreatedAt:  time.Now().UTC().Format(time.RFC3339Nano),

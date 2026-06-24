@@ -19,6 +19,8 @@ type Message struct {
 	ToolCalls  string `json:"tool_calls"` // JSON
 	ToolCallID string `json:"tool_call_id"`
 	Citations  string `json:"citations"` // JSON
+	Thinking   string `json:"thinking,omitempty"` // 推理过程（reasoning_content），仅展示，不回传模型
+	Images     string `json:"images,omitempty"`   // 用户消息图片 dataURL JSON 数组（多模态）
 	TokensIn   int    `json:"tokens_in"`
 	TokensOut  int    `json:"tokens_out"`
 	CreatedAt  string `json:"created_at"`
@@ -92,6 +94,16 @@ func (d *DB) UpdateSession(s Session) error {
 	return err
 }
 
+// DeleteMessagesFrom 删除指定会话中 created_at 严格大于 since 的所有消息。
+// 用于「重新回答」：截断某条 user 消息之后的旧 assistant / tool 回答，
+// 让 agent 基于保留的历史重新生成，避免旧回答残留在上下文里。
+func (d *DB) DeleteMessagesFrom(sessionID, since string) error {
+	_, err := d.sql.Exec(
+		`DELETE FROM messages WHERE session_id=? AND created_at > ?`,
+		sessionID, since)
+	return err
+}
+
 // RenameSession updates a session's title and its updated_at timestamp.
 func (d *DB) RenameSession(id, title, now string) error {
 	_, err := d.sql.Exec(`UPDATE sessions SET title=?, updated_at=? WHERE id=?`, title, now, id)
@@ -100,15 +112,16 @@ func (d *DB) RenameSession(id, title, now string) error {
 
 func (d *DB) AppendMessage(m Message) error {
 	_, err := d.sql.Exec(`INSERT INTO messages
-		(id,session_id,role,content,tool_calls,tool_call_id,citations,tokens_in,tokens_out,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		(id,session_id,role,content,tool_calls,tool_call_id,citations,thinking,images,tokens_in,tokens_out,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.SessionID, m.Role, nullable(m.Content), nullable(m.ToolCalls),
-		nullable(m.ToolCallID), nullable(m.Citations), m.TokensIn, m.TokensOut, m.CreatedAt)
+		nullable(m.ToolCallID), nullable(m.Citations), nullable(m.Thinking), nullable(m.Images),
+		m.TokensIn, m.TokensOut, m.CreatedAt)
 	return err
 }
 
 func (d *DB) ListMessages(sessionID string) ([]Message, error) {
-	rows, err := d.sql.Query(`SELECT id,session_id,role,content,tool_calls,tool_call_id,citations,tokens_in,tokens_out,created_at
+	rows, err := d.sql.Query(`SELECT id,session_id,role,content,tool_calls,tool_call_id,citations,thinking,images,tokens_in,tokens_out,created_at
 		FROM messages WHERE session_id=? ORDER BY created_at`, sessionID)
 	if err != nil {
 		return nil, err
@@ -117,9 +130,9 @@ func (d *DB) ListMessages(sessionID string) ([]Message, error) {
 	var out []Message
 	for rows.Next() {
 		var m Message
-		var content, tc, tcid, cit *string
+		var content, tc, tcid, cit, thinking, images *string
 		if err := rows.Scan(&m.ID, &m.SessionID, &m.Role, &content, &tc, &tcid, &cit,
-			&m.TokensIn, &m.TokensOut, &m.CreatedAt); err != nil {
+			&thinking, &images, &m.TokensIn, &m.TokensOut, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		if content != nil {
@@ -133,6 +146,12 @@ func (d *DB) ListMessages(sessionID string) ([]Message, error) {
 		}
 		if cit != nil {
 			m.Citations = *cit
+		}
+		if thinking != nil {
+			m.Thinking = *thinking
+		}
+		if images != nil {
+			m.Images = *images
 		}
 		out = append(out, m)
 	}

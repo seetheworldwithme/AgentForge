@@ -11,7 +11,12 @@ import (
 	"github.com/agent-rust/core/internal/store"
 )
 
-const disabledSettingKey = "skills.disabled"
+const (
+	disabledSettingKey = "skills.disabled"
+	// skillsSubdir skills 子目录，全局根与工作区根共用：
+	// 全局 → ~/.agentforge/skills，工作区 → <workdir>/.agentforge/skills。
+	skillsSubdir = ".agentforge/skills"
+)
 
 type Source string
 
@@ -49,6 +54,10 @@ func NewManager(opts Options) *Manager {
 		if home, err := os.UserHomeDir(); err == nil {
 			opts.GlobalRoot = home
 		}
+	}
+	// 预建全局 skills 目录（~/.agentforge/skills）：让「安装即用」成立；失败则后续扫描跳过，不致命。
+	if opts.GlobalRoot != "" {
+		_ = os.MkdirAll(filepath.Join(opts.GlobalRoot, skillsSubdir), 0o755)
 	}
 	if opts.ProjectRoot == "" {
 		if wd, err := os.Getwd(); err == nil {
@@ -214,11 +223,11 @@ func (m *Manager) sources() []sourceRoot {
 	return out
 }
 
+// skillDirs 给出某个根下的 skills 目录：全局根与工作区根结构一致，统一为 .agentforge/skills
+// （全局 → ~/.agentforge/skills，工作区 → <workdir>/.agentforge/skills），与 memory 的
+// <workdir>/.agentforge/memory 共用 .agentforge 目录。
 func skillDirs(root string) []string {
-	return []string{
-		filepath.Join(root, ".agent", "skills"),
-		filepath.Join(root, ".agents", "skills"),
-	}
+	return []string{filepath.Join(root, skillsSubdir)}
 }
 
 func readMetadata(path, fallback string) (string, string) {

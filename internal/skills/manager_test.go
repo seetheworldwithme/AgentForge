@@ -19,8 +19,8 @@ func TestManagerDiscoversGlobalAndWorkspaceSkills(t *testing.T) {
 	// 仅区分「全局」与「当前工作目录」两类来源；项目根（启动目录）不再作为独立来源。
 	globalRoot := t.TempDir()
 	workspaceRoot := t.TempDir()
-	writeSkill(t, filepath.Join(globalRoot, ".agent", "skills", "global-skill", "SKILL.md"), "global-skill", "Global skill")
-	writeSkill(t, filepath.Join(workspaceRoot, ".agent", "skills", "workspace-skill", "SKILL.md"), "workspace-skill", "Workspace skill")
+	writeSkill(t, filepath.Join(globalRoot, ".agentforge", "skills", "global-skill", "SKILL.md"), "global-skill", "Global skill")
+	writeSkill(t, filepath.Join(workspaceRoot, ".agentforge", "skills", "workspace-skill", "SKILL.md"), "workspace-skill", "Workspace skill")
 
 	m := NewManager(Options{
 		DB:         db,
@@ -59,8 +59,8 @@ func TestManagerPersistsDisabledSkillAndBuildsPrompt(t *testing.T) {
 	defer db.Close()
 
 	root := t.TempDir()
-	writeSkill(t, filepath.Join(root, ".agent", "skills", "enabled", "SKILL.md"), "enabled", "Use this enabled skill")
-	writeSkill(t, filepath.Join(root, ".agent", "skills", "disabled", "SKILL.md"), "disabled", "Do not include this skill")
+	writeSkill(t, filepath.Join(root, ".agentforge", "skills", "enabled", "SKILL.md"), "enabled", "Use this enabled skill")
+	writeSkill(t, filepath.Join(root, ".agentforge", "skills", "disabled", "SKILL.md"), "disabled", "Do not include this skill")
 
 	m := NewManager(Options{DB: db, GlobalRoot: root})
 	items, err := m.List()
@@ -103,11 +103,11 @@ func TestManagerListReflectsWorkDirChanges(t *testing.T) {
 	defer db.Close()
 
 	globalRoot := t.TempDir()
-	writeSkill(t, filepath.Join(globalRoot, ".agent", "skills", "g-skill", "SKILL.md"), "g-skill", "Global")
+	writeSkill(t, filepath.Join(globalRoot, ".agentforge", "skills", "g-skill", "SKILL.md"), "g-skill", "Global")
 	dirA := t.TempDir()
-	writeSkill(t, filepath.Join(dirA, ".agents", "skills", "a-skill", "SKILL.md"), "a-skill", "A")
+	writeSkill(t, filepath.Join(dirA, ".agentforge", "skills", "a-skill", "SKILL.md"), "a-skill", "A")
 	dirB := t.TempDir()
-	writeSkill(t, filepath.Join(dirB, ".agents", "skills", "b-skill", "SKILL.md"), "b-skill", "B")
+	writeSkill(t, filepath.Join(dirB, ".agentforge", "skills", "b-skill", "SKILL.md"), "b-skill", "B")
 
 	current := dirA
 	m := NewManager(Options{DB: db, GlobalRoot: globalRoot, WorkDir: func() string { return current }})

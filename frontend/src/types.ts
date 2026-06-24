@@ -9,6 +9,7 @@ export interface Provider {
   chat_model: string;
   embed_model?: string;
   kind?: 'chat' | 'embed'; // 后端持久化；空/缺省视为 chat（向后兼容老数据）
+  vision?: boolean; // 视觉(VL)模型：允许在对话框粘贴图片
   is_default: boolean;
 }
 
@@ -26,6 +27,8 @@ export interface Message {
   session_id: string;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
+  thinking?: string; // 推理模型的思考过程（reasoning_content），仅展示，不回传模型
+  images?: string[]; // 用户消息附带的图片 dataURL（多模态）
   tool_calls?: string; // JSON
   tool_call_id?: string;
   citations?: string; // JSON
@@ -110,6 +113,7 @@ export interface TreeItem {
 export type ChatEventName =
   | 'started'
   | 'delta'
+  | 'thinking'
   | 'tool_call'
   | 'confirm_req'
   | 'tool_result'

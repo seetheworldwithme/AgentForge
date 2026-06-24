@@ -32,7 +32,8 @@ export type IconName =
   | 'wrench'
   | 'terminal'
   | 'square'
-  | 'brain';
+  | 'brain'
+  | 'image';
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: (
@@ -190,6 +191,13 @@ const PATHS: Record<IconName, ReactNode> = {
   square: <rect width="14" height="14" x="5" y="5" rx="2" />,
   brain: (
     <path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z" />
+  ),
+  image: (
+    <>
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </>
   ),
 };
 

@@ -15,6 +15,7 @@ type Message struct {
 	Role       Role       `json:"role"`
 	Content    string     `json:"content,omitempty"`
 	Images     []ImageRef `json:"-"` // vision：由 openai.go 转成多模态 content，不直接序列化
+	Thinking   string     `json:"-"` // 推理过程（仅用于持久化桥接，绝不回传给模型）
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // for role=tool
 }
@@ -40,10 +41,11 @@ type ToolSpec struct {
 
 // Chunk is one piece of a streamed response.
 type Chunk struct {
-	Text     string    // non-empty when assistant emits text
-	ToolCall *ToolCall // non-nil when a tool call completes
-	Usage    *Usage    // non-nil on final chunk
-	Done     bool      // true on terminal chunk
+	Text      string    // non-empty when assistant emits text
+	Reasoning string    // non-empty when a reasoning model emits thinking（reasoning_content / reasoning）
+	ToolCall  *ToolCall // non-nil when a tool call completes
+	Usage     *Usage    // non-nil on final chunk
+	Done      bool      // true on terminal chunk
 }
 
 type Usage struct {

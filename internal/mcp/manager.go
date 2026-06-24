@@ -26,6 +26,10 @@ func NewManager(db *store.DB) *Manager {
 }
 
 func NewManagerWithPath(db *store.DB, configPath string) *Manager {
+	// 预建配置目录（~/.agentforge）：让「安装即用」成立；writeServers 仍会兜底重建。
+	if configPath != "" {
+		_ = os.MkdirAll(filepath.Dir(configPath), 0o755)
+	}
 	return &Manager{db: db, configPath: configPath}
 }
 
@@ -185,12 +189,14 @@ func (m *Manager) ToolSpecsFor(allowed []string) []tools.Spec {
 	return out
 }
 
+const defaultConfigSubpath = ".agentforge/mcp.json"
+
 func defaultConfigPath() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return filepath.Join(".agent", "mcp.json")
+		return defaultConfigSubpath
 	}
-	return filepath.Join(home, ".agent", "mcp.json")
+	return filepath.Join(home, defaultConfigSubpath)
 }
 
 func (m *Manager) Execute(ctx context.Context, name, args string) (tools.Result, error) {

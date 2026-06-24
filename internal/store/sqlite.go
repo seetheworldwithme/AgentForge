@@ -110,6 +110,15 @@ func (d *DB) applyMigrations() error {
 	if err := d.ensureColumn("providers", "kind"); err != nil {
 		return err
 	}
+	if err := d.ensureColumn("providers", "vision"); err != nil {
+		return err
+	}
+	if err := d.ensureColumn("messages", "thinking"); err != nil {
+		return err
+	}
+	if err := d.ensureColumn("messages", "images"); err != nil {
+		return err
+	}
 	return nil
 }
 

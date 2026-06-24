@@ -37,6 +37,8 @@ type providerDTO struct {
 	ChatModel  string `json:"chat_model"`
 	EmbedModel string `json:"embed_model"`
 	IsDefault  bool   `json:"is_default"`
+	// Vision 标记该模型支持视觉/图片粘贴（仅 chat 类有意义）。
+	Vision bool `json:"vision"`
 	// Kind selects which endpoint /providers/test probes: "chat" (default)
 	// hits chat/completions; "embed" hits /embeddings. Other endpoints ignore it.
 	Kind string `json:"kind"`
@@ -65,7 +67,7 @@ func (h *ConfigHandler) createProvider(w http.ResponseWriter, r *http.Request) {
 	p := store.Provider{
 		ID: "prov_" + ulid.Make().String(), Name: dto.Name, BaseURL: dto.BaseURL,
 		APIKey: dto.APIKey, ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
-		Kind: dto.Kind, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
+		Kind: dto.Kind, Vision: dto.Vision, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	// 设为默认时，先清除同类的旧默认：chat 与 embed 各自只保留一个默认模型。
 	if p.IsDefault {
@@ -94,7 +96,7 @@ func (h *ConfigHandler) updateProvider(w http.ResponseWriter, r *http.Request) {
 	p := store.Provider{
 		ID: id, Name: dto.Name, BaseURL: dto.BaseURL, APIKey: dto.APIKey,
 		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel, Kind: dto.Kind,
-		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
+		Vision: dto.Vision, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
 	// 设为默认时，先清除同类的旧默认：chat 与 embed 各自只保留一个默认模型。
 	if p.IsDefault {
@@ -279,7 +281,7 @@ func toProviderDTO(p store.Provider) providerDTO {
 	return providerDTO{
 		ID: p.ID, Name: p.Name, BaseURL: p.BaseURL, APIKey: p.APIKey,
 		ChatModel: p.ChatModel, EmbedModel: p.EmbedModel, Kind: p.Kind,
-		IsDefault: p.IsDefault,
+		Vision: p.Vision, IsDefault: p.IsDefault,
 	}
 }
 

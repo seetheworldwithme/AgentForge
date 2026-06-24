@@ -25,7 +25,7 @@ func TestSkillsHTTPTogglePersists(t *testing.T) {
 	defer db.Close()
 
 	root := t.TempDir()
-	mustWriteSkillFile(t, filepath.Join(root, ".agent", "skills", "foo", "SKILL.md"))
+	mustWriteSkillFile(t, filepath.Join(root, ".agentforge", "skills", "foo", "SKILL.md"))
 
 	mgr := skills.NewManager(skills.Options{DB: db, GlobalRoot: root})
 	r := chi.NewRouter()

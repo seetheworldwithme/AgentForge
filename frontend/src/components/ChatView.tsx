@@ -9,6 +9,7 @@ export function ChatView() {
   const currentId = useSessionStore((s) => s.currentId);
   const messages = useSessionStore((s) => s.messages);
   const streaming = useSessionStore((s) => s.streaming);
+  const retry = useSessionStore((s) => s.retry);
   const pendingConfirm = useConfirmStore((s) => s.pending[0]);
   const respondConfirm = useConfirmStore((s) => s.respond);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -17,10 +18,16 @@ export function ChatView() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 等待首字：正在流式输出，但最后一条 assistant 消息仍为空（首字未到，
-  // 或多步工具调用后又进入思考）。
+  // 纯等待（连接中、尚无任何数据）才显示顶层三点；思考中（已有 thinking）由气泡内
+  // 的思考折叠区接管三点，避免重复。
   const last = messages[messages.length - 1];
-  const waiting = streaming && !!last && last.role === 'assistant' && last.content.trim() === '';
+  const waiting = streaming && !!last && last.role === 'assistant' && last.content.trim() === '' && !last.thinking;
+
+  // 重新回答的当前选项：沿用最后一条 assistant 之前的最后一条 user 所属会话设置。
+  // 这里取会话级开关；retry 内部会定位到最后一条 user。
+  const onRetry = () => {
+    retry({});
+  };
 
   return (
     <div className="flex h-full flex-1 flex-col">
@@ -30,10 +37,24 @@ export function ChatView() {
         ) : (
           <div className="mx-auto max-w-3xl px-4 py-6">
             {messages
-              .filter((m) => m.role !== 'assistant' || m.content.trim().length > 0)
-              .map((m) => (
-                <MessageBubble key={m.id} m={m} />
-              ))}
+              .filter(
+                (m) => m.role !== 'assistant' || m.content.trim().length > 0 || !!m.thinking,
+              )
+              .map((m, idx, arr) => {
+                // 最后一条 assistant 消息、且当前不在流式输出时，展示 Copy / Retry
+                const isLastAssistant =
+                  m.role === 'assistant' &&
+                  idx === arr.length - 1 &&
+                  !streaming;
+                return (
+                  <MessageBubble
+                    key={m.id}
+                    m={m}
+                    showActions={isLastAssistant}
+                    onRetry={onRetry}
+                  />
+                );
+              })}
             {waiting && <TypingIndicator />}
             <div ref={bottomRef} />
           </div>

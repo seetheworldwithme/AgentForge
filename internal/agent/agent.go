@@ -88,6 +88,9 @@ type RunInput struct {
 	UseRAG       bool
 	KBID         string // required when UseRAG
 	UserMessage  string // the new user turn (appended to History if non-empty)
+	// UserImages 是本轮用户消息附带的多模态图片（dataURL），随 UserMessage 一起
+	// append 到 history，由 openai.go 转成 image_url 发给视觉模型。
+	UserImages []llm.ImageRef
 	// PlanMode 开启「计划模式」：注入只读调研 + 产出结构化计划的系统提示词，
 	// 并从暴露给模型的工具中过滤掉 file_write/file_edit。本模式只读，不改文件。
 	PlanMode bool
@@ -100,7 +103,9 @@ type RunInput struct {
 func (a *Agent) Run(ctx context.Context, in RunInput) {
 	history := in.History
 	if in.UserMessage != "" {
-		history = append(history, llm.Message{Role: llm.RoleUser, Content: in.UserMessage})
+		history = append(history, llm.Message{
+			Role: llm.RoleUser, Content: in.UserMessage, Images: in.UserImages,
+		})
 	}
 	if a.deps.Skills != nil {
 		// 临时勾选优先：本次指定了 SkillIDs 时只注入这些 skill（替代全局 enabled）。
@@ -200,6 +205,11 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			if chunk.Text != "" {
 				assistantText.WriteString(chunk.Text)
 				in.Emit.Emit("delta", map[string]any{"text": chunk.Text})
+			}
+			// 推理模型的思考过程：转发给前端展示，由 handler 层 collector 持久化；
+			// 不写入 history（reasoning 不回传模型），也不计入正文 assistantText。
+			if chunk.Reasoning != "" {
+				in.Emit.Emit("thinking", map[string]any{"text": chunk.Reasoning})
 			}
 			if chunk.ToolCall != nil {
 				toolCalls = append(toolCalls, *chunk.ToolCall)
