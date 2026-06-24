@@ -167,10 +167,9 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			ID: userMsgID, SessionID: id, Role: "user", Content: req.Message,
 			Images: userImages, CreatedAt: now,
 		})
-		history = append(history, llm.Message{
-			Role: llm.RoleUser, Content: req.Message, Images: toImageRefs(req.Images),
-		})
-		firstMessage = firstMessage || len(history) == 1
+		// 注意：此处只持久化 user 消息，不把它 append 进 history——本轮 user 由
+		// agent.Run 的 UserMessage 统一追加（见 agent.go），否则模型会收到两条重复
+		// 的 user 消息。firstMessage 已由 len(storedMsgs)==0 判定，不依赖 history 长度。
 	}
 
 	// emitter that records the assistant message as it streams

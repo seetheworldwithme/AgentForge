@@ -3,6 +3,8 @@ package server
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -94,4 +96,72 @@ func TestChatEndToEndSSE(t *testing.T) {
 	// keep bufio referenced (used conceptually by SSE parser in llm pkg)
 	_ = bufio.NewReader
 	_ = context.Background
+}
+
+// TestChatSendsUserOnce 验证正常发送时，发给 LLM 的消息序列里本轮 user 消息只出现一次。
+// 回归保护：此前 handler 把 user append 进 history，agent 又用 UserMessage 再 append 一条，
+// 导致模型收到两条重复的 user 消息；现在统一由 agent.UserMessage 追加。
+func TestChatSendsUserOnce(t *testing.T) {
+	var gotMessages []map[string]any
+	fake := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if b, err := io.ReadAll(r.Body); err == nil {
+			var body struct {
+				Messages []map[string]any `json:"messages"`
+			}
+			if json.Unmarshal(b, &body) == nil {
+				gotMessages = body.Messages
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		for _, l := range []string{
+			`data: {"choices":[{"delta":{"content":"ok"}}]}`,
+			`data: [DONE]`,
+		} {
+			_, _ = w.Write([]byte(l + "\n\n"))
+			f.Flush()
+		}
+	}))
+	defer fake.Close()
+
+	db, _ := store.Open(t.TempDir() + "/user-once.db")
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	db.CreateProvider(store.Provider{
+		ID: "prov_1", Name: "fake", BaseURL: fake.URL, APIKey: "k",
+		ChatModel: "m", IsDefault: true, CreatedAt: now, UpdatedAt: now,
+	})
+	db.CreateSession(store.Session{
+		ID: "sess_1", Title: "t", ProviderID: "prov_1", ToolsEnabled: 0,
+		CreatedAt: now, UpdatedAt: now,
+	})
+	gate := tools.NewGate()
+	engine := tools.NewEngine(tools.NewRegistry(), gate)
+	router := NewRouter(Deps{DB: db, Gate: gate, Engine: engine})
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/sessions/sess_1/chat",
+		strings.NewReader(`{"message":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		router.ServeHTTP(rec, req)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("chat handler did not return within 5s")
+	}
+
+	userCount := 0
+	for _, m := range gotMessages {
+		if m["role"] == "user" {
+			userCount++
+		}
+	}
+	if userCount != 1 {
+		t.Fatalf("user messages sent to LLM = %d, want 1 (no duplicate); messages=%+v",
+			userCount, gotMessages)
+	}
 }

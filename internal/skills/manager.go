@@ -78,7 +78,9 @@ func (m *Manager) List() ([]Skill, error) {
 		return nil, err
 	}
 
-	var out []Skill
+	// make 而非 var：空结果时返回非 nil 切片，JSON 序列化为 [] 而非 null——
+	// 前端 skills.reduce 等消费方期望数组，null 会导致白屏。
+	out := make([]Skill, 0)
 	seen := map[string]bool{}
 	for _, src := range m.sources() {
 		for _, dir := range skillDirs(src.root) {
