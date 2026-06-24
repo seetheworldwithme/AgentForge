@@ -24,6 +24,12 @@ type SkillProvider interface {
 	InstructionsFor(ids []string) (string, error)
 }
 
+// MemoryProvider 是 agent 注入记忆索引所需的最小接口。
+// 实现者（internal/memory.MemoryStore）返回当前所有记忆的索引文本；无记忆返回空串。
+type MemoryProvider interface {
+	IndexContext() string
+}
+
 type RetrievedChunk struct {
 	ID         string
 	Text       string
@@ -38,6 +44,7 @@ type Deps struct {
 	Tools  *tools.Engine
 	RAG    RAGRetriever  // may be nil when RAG is off
 	Skills SkillProvider // may be nil when skills are off
+	Memory MemoryProvider // may be nil when memory is off
 	// MaxIter is the tool-iteration checkpoint interval: every MaxIter tool
 	// iterations the loop logs and emits a status checkpoint. It is NOT a hard
 	// cap — a task keeps running until it produces a final text answer, hits
