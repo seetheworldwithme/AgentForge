@@ -52,6 +52,8 @@ export function MessageBubble({
   const lastMsgId = useSessionStore((s) => s.messages[s.messages.length - 1]?.id);
   const isLive = streaming && lastMsgId === m.id;
   const isThinkingLive = isLive && m.role === 'assistant' && m.content.trim() === '' && !!m.thinking;
+  // 实时估算 tokens/s：仅直播消息有效（结束后由 m.tps 承载后端精确值，见 Retry 旁）。
+  const liveTps = useTokenSpeed(m.content, m.thinking ?? '', isLive);
   const [thinkOpen, setThinkOpen] = useState(false);
   const userToggled = useRef(false);
   useEffect(() => {
@@ -129,8 +131,14 @@ export function MessageBubble({
     <div className={'my-2.5 flex items-start gap-3 ' + (isUser ? 'flex-row-reverse' : '')}>
       <Avatar role={m.role} />
       <div className={'max-w-[80%] ' + (isUser ? 'flex flex-col items-end' : '')}>
-        <div className="mb-1 px-1 text-[11px] font-medium text-muted-foreground">
-          {isUser ? '你' : 'Assistant'}
+        <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-muted-foreground">
+          <span>{isUser ? '你' : 'Assistant'}</span>
+          {!isUser && isLive && liveTps > 0 && (
+            <span className="inline-flex items-center gap-0.5 text-primary/80">
+              <Icon name="zap" size={11} strokeWidth={2.25} />
+              {fmtTps(liveTps)} tok/s
+            </span>
+          )}
         </div>
         {/* 思考过程折叠区（仅 assistant 且有 thinking）：思考中默认展开带三点，正文一到自动折叠 */}
         {!isUser && m.thinking && (
@@ -190,6 +198,15 @@ export function MessageBubble({
             >
               Retry
             </button>
+            {m.tps && m.tps > 0 ? (
+              <span
+                className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"
+                title="本轮平均生成速率（来自服务器返回的 completion_tokens）"
+              >
+                <Icon name="zap" size={11} strokeWidth={2.25} className="text-primary/70" />
+                {fmtTps(m.tps)} tok/s
+              </span>
+            ) : null}
           </div>
         )}
       </div>
@@ -253,4 +270,67 @@ function ThinkingDots() {
       ))}
     </span>
   );
+}
+
+// 流式期间服务器不逐块返回 token 计数（usage 仅在每轮结束给出一次），实时速率只能
+// 按到达文本估算：CJK 字符 ≈ 1 token，其余 ≈ 4 字符/token。仅作实时跳动参考，
+// 每轮结束后由后端 done 事件给出精确值（m.tps）。
+function estimateTokens(s: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of s) {
+    const code = ch.codePointAt(0)!;
+    if ((code >= 0x3000 && code <= 0x9fff) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xff00 && code <= 0xffef)) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return cjk + other / 4;
+}
+
+// tokens/s 格式化：≥100 取整，否则保留 1 位小数。
+function fmtTps(tps: number): string {
+  return tps.toFixed(tps >= 100 ? 0 : 1);
+}
+
+// useTokenSpeed 按滑动窗口（最近 1.5s）估算实时 tokens/s。仅当 live 时统计新增文本，
+// 否则重置；live 翻回 false（本轮结束）时归零，指示器随即消失，由 m.tps 接管精确展示。
+function useTokenSpeed(content: string, thinking: string, live: boolean): number {
+  const WINDOW_MS = 1500;
+  const samples = useRef<{ t: number; tokens: number }[]>([]);
+  const prevContent = useRef(0);
+  const prevThinking = useRef(0);
+  const [tps, setTps] = useState(0);
+
+  // 新增文本（正文 + 推理）估算为 token，记一条带时间戳的样本
+  useEffect(() => {
+    if (!live) return;
+    const added =
+      estimateTokens(content.slice(prevContent.current)) +
+      estimateTokens(thinking.slice(prevThinking.current));
+    prevContent.current = content.length;
+    prevThinking.current = thinking.length;
+    if (added > 0) samples.current.push({ t: performance.now(), tokens: added });
+  }, [content, thinking, live]);
+
+  // 定时（4 次/秒）按窗口内样本总量折算每秒速率；live 结束时重置
+  useEffect(() => {
+    if (!live) {
+      samples.current = [];
+      prevContent.current = 0;
+      prevThinking.current = 0;
+      setTps(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      const now = performance.now();
+      samples.current = samples.current.filter((s) => now - s.t <= WINDOW_MS);
+      const sum = samples.current.reduce((a, s) => a + s.tokens, 0);
+      setTps(sum / (WINDOW_MS / 1000));
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [live]);
+
+  return tps;
 }

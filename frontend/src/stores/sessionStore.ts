@@ -282,6 +282,18 @@ function buildChatHandler(
           return { messages: [...msgs, { id: 'warn-' + Date.now(), session_id: id, role: 'assistant', content: msg, variant: 'warning' }] };
         }
         return st;
+      } else if (e.event === 'done') {
+        // 本轮结束：把后端 done 事件携带的精确 tokens/s 记到最后一条 assistant 消息，
+        // 供 Retry 旁展示（provider 未返回 usage 时无此字段，前端不显示）。
+        const tps = e.data?.tokens_per_sec;
+        if (typeof tps === 'number' && tps > 0) {
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === 'assistant') {
+              msgs[i] = { ...msgs[i], tps };
+              break;
+            }
+          }
+        }
       } else if (e.event === 'error') {
         const text = e.data?.message ? `错误：${e.data.message}` : '错误：请求失败';
         let found = false;

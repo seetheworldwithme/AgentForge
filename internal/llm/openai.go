@@ -24,10 +24,18 @@ func NewOpenAIClient(cfg Config) *OpenAIClient {
 }
 
 type chatReq struct {
-	Model    string    `json:"model"`
-	Messages []rawMsg  `json:"messages"`
-	Tools    []rawTool `json:"tools,omitempty"`
-	Stream   bool      `json:"stream"`
+	Model         string            `json:"model"`
+	Messages      []rawMsg          `json:"messages"`
+	Tools         []rawTool         `json:"tools,omitempty"`
+	Stream        bool              `json:"stream"`
+	StreamOptions *streamOptionsReq `json:"stream_options,omitempty"`
+}
+
+// streamOptionsReq 开启流式 usage 返回：服务器在每轮流式结束时返回
+// usage（prompt_tokens / completion_tokens，用真实 tokenizer 计算）。
+// 不支持的 provider 会忽略该字段，Usage 仍为 nil，前端回退到实时估算。
+type streamOptionsReq struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type rawMsg struct {
@@ -114,6 +122,7 @@ func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []T
 	body, _ := json.Marshal(chatReq{
 		Model: c.cfg.Model, Messages: toRawMessages(msgs),
 		Tools: toRawTools(tools), Stream: true,
+		StreamOptions: &streamOptionsReq{IncludeUsage: true},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		strings.TrimRight(c.cfg.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))

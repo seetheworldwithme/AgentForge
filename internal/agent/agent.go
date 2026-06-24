@@ -227,8 +227,14 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		var usage *llm.Usage
 		chunks := 0
 		sawDone := false
+		// firstAt 记录本轮首个生成 token（正文或推理）到达时刻，用于结束时计算
+		// 精确生成速率 completion_tokens / (firstAt→done)，排除首 token 前的网络时延。
+		var firstAt time.Time
 		for chunk := range stream {
 			chunks++
+			if (chunk.Text != "" || chunk.Reasoning != "") && firstAt.IsZero() {
+				firstAt = time.Now()
+			}
 			if chunk.Text != "" {
 				assistantText.WriteString(chunk.Text)
 				in.Emit.Emit("delta", map[string]any{"text": chunk.Text})
@@ -292,7 +298,19 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			})
 			// pure text answer; terminate. 记录预览，便于诊断“为什么停在这一轮”
 			log.Printf("[Agent] stop: no tool call at iter=%d, preview=%q", iter, truncate(assistantText.String(), 200))
-			in.Emit.Emit("done", map[string]any{"usage": usage})
+			// 精确平均生成速率：服务器返回的 completion_tokens / 真实生成时长（首 token→结束）。
+			// 仅当 provider 返回 usage 且可计时时才有值；否则缺省，前端回退到实时估算。
+			var tokensPerSec float64
+			if usage != nil && usage.OutputTokens > 0 && !firstAt.IsZero() {
+				if dur := time.Since(firstAt).Seconds(); dur > 0 {
+					tokensPerSec = float64(usage.OutputTokens) / dur
+				}
+			}
+			done := map[string]any{"usage": usage}
+			if tokensPerSec > 0 {
+				done["tokens_per_sec"] = tokensPerSec
+			}
+			in.Emit.Emit("done", done)
 			return
 		}
 
