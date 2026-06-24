@@ -62,11 +62,6 @@ export const api = {
   deleteProvider: (id: string) => jdel(`/api/providers/${id}`),
   updateProvider: (id: string, p: Omit<Provider, 'id'>) =>
     jput<Provider>(`/api/providers/${id}`, p),
-  // The provider dedicated to conversation-title generation. Separate from the
-  // chat provider so the title call runs on its own connection in parallel.
-  getTitleProvider: () => jget<{ provider_id: string }>('/api/settings/title-provider'),
-  setTitleProvider: (provider_id: string) =>
-    jput<{ provider_id: string }>('/api/settings/title-provider', { provider_id }),
   // 单次对话的工具调用硬上限。0 = 不限制。
   getToolLimit: () => jget<{ limit: number }>('/api/settings/tool-limit'),
   setToolLimit: (limit: number) =>

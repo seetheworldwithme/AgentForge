@@ -94,7 +94,7 @@ export function KnowledgeWorkbench() {
       overlap !== (active.chunk_overlap || DEFAULT_OVERLAP));
 
   const create = async () => {
-    const firstProvider = providers.find((p) => p.is_default) ?? providers[0];
+    const firstProvider = embedProviders.find((p) => p.is_default) ?? embedProviders[0] ?? providers[0];
     await createKB({
       name: '未命名知识库',
       description: '',

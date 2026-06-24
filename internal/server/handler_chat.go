@@ -243,16 +243,15 @@ func truncateForLog(s string, n int) string {
 	return string(r[:n]) + "..."
 }
 
-// titleClient returns the provider dedicated to title generation, falling back
-// to the given chat client when none is configured. Using a separate provider
-// lets the title call run on its own connection in parallel with the reply.
+// titleClient returns the provider used for conversation-title generation.
+// Titles reuse the default chat model (the one flagged "默认" on the settings
+// page), so the call runs on its own connection in parallel with the reply.
+// Falls back to the given chat client when no default chat model is configured.
 func (h *ChatHandler) titleClient(fallback llm.LLMClient) llm.LLMClient {
-	if id, err := h.DB.GetSetting("title_provider_id"); err == nil && id != "" {
-		if p, err := h.DB.GetProvider(id); err == nil && p.ChatModel != "" {
-			return llm.NewOpenAIClient(llm.Config{
-				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
-			})
-		}
+	if def, err := h.DB.GetDefaultProviderByKind("chat"); err == nil && def.ChatModel != "" {
+		return llm.NewOpenAIClient(llm.Config{
+			BaseURL: def.BaseURL, APIKey: def.APIKey, Model: def.ChatModel,
+		})
 	}
 	return fallback
 }

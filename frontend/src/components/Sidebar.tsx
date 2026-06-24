@@ -39,9 +39,10 @@ export function Sidebar({
 
   const handleNewChat = () => {
     // 没有 provider 时引导用户去设置；否则进入空白草稿态（不立即创建 session）。
-    const def = providers.find((p) => p.is_default);
-    const providerId = def ? def.id : providers[0]?.id;
-    if (!providerId) {
+    // 新会话必须用对话模型：优先取默认的 chat 模型，避免误用向量（embed）模型。
+    const chatProviders = providers.filter((p) => (p.kind ?? 'chat') !== 'embed');
+    const def = chatProviders.find((p) => p.is_default) ?? chatProviders[0];
+    if (!def?.id) {
       onOpenSettings();
       return;
     }

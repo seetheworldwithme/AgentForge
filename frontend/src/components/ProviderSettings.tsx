@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useConfigStore } from '../stores/configStore';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
@@ -40,11 +40,67 @@ const VENDORS: {
     embed_model: '',
   },
   {
+    key: 'siliconflow',
+    label: '硅基流动 (SiliconFlow)',
+    base_url: 'https://api.siliconflow.cn/v1',
+    chat_model: 'Qwen/Qwen2.5-72B-Instruct',
+    embed_model: 'BAAI/bge-m3',
+  },
+  {
+    key: 'zhipu-zai',
+    label: '智谱 (z.ai)',
+    base_url: 'https://api.z.ai/api/paas/v4',
+    chat_model: 'glm-4-flash',
+    embed_model: 'embedding-3',
+  },
+  {
+    key: 'zhipu-bigmodel',
+    label: '智谱 (BigModel)',
+    base_url: 'https://open.bigmodel.cn/api/paas/v4',
+    chat_model: 'glm-4-flash',
+    embed_model: 'embedding-3',
+  },
+  {
+    key: 'volcengine',
+    label: '火山引擎 (豆包)',
+    base_url: 'https://ark.cn-beijing.volces.com/api/v3',
+    chat_model: 'doubao-1.5-pro-32k',
+    embed_model: '',
+  },
+  {
     key: 'qwen',
-    label: '通义千问 (DashScope)',
+    label: '阿里云 (DashScope / 通义千问)',
     base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     chat_model: 'qwen-plus',
     embed_model: 'text-embedding-v2',
+  },
+  {
+    key: 'tencent-hunyuan',
+    label: '腾讯云 (混元)',
+    base_url: 'https://api.hunyuan.cloud.tencent.com/v1',
+    chat_model: 'hunyuan-pro',
+    embed_model: '',
+  },
+  {
+    key: 'minimax',
+    label: 'MiniMax',
+    base_url: 'https://api.minimaxi.com/v1',
+    chat_model: 'MiniMax-M3',
+    embed_model: '',
+  },
+  {
+    key: 'xiaomi-mimo',
+    label: '小米 MiMo',
+    base_url: 'https://api.xiaomimimo.com/v1',
+    chat_model: 'mimo-v2.5-pro',
+    embed_model: '',
+  },
+  {
+    key: 'ollama',
+    label: 'Ollama (本地)',
+    base_url: 'http://localhost:11434/v1',
+    chat_model: 'llama3.1',
+    embed_model: 'nomic-embed-text',
   },
   {
     key: 'custom',
@@ -84,20 +140,9 @@ export function ProviderSettings() {
   const [vendorKey, setVendorKey] = useState<string>('openai');
   // 模型类别：chat / embed
   const [category, setCategory] = useState<ModelCategory>('chat');
-  const [titleProviderId, setTitleProviderId] = useState('');
-
-  // 标题生成是 chat 任务，下拉只列对话模型（排除 embed 向量模型）；无 kind 视为 chat
-  const chatProviders = useMemo(
-    () => providers.filter((p) => (p.kind ?? 'chat') !== 'embed'),
-    [providers],
-  );
 
   useEffect(() => {
     if (!loaded) load();
-    api
-      .getTitleProvider()
-      .then((r) => setTitleProviderId(r.provider_id || ''))
-      .catch(() => {});
   }, [loaded, load]);
 
   const resetForm = () => {
@@ -266,37 +311,6 @@ export function ProviderSettings() {
         )}
       </div>
 
-      {/* 标题生成模型：独立 provider，与主对话并行、互不卡顿 */}
-      <div className="rounded-xl border border-border bg-card p-4">
-        <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
-          标题生成模型
-        </label>
-        <select
-          className="field"
-          value={titleProviderId}
-          onChange={async (e) => {
-            const v = e.target.value;
-            setTitleProviderId(v);
-            try {
-              await api.setTitleProvider(v);
-              setStatus({ kind: 'success', message: '标题模型已更新' });
-            } catch {
-              setStatus({ kind: 'error', message: '标题模型保存失败' });
-            }
-          }}
-        >
-          <option value="">未设置（跟随各会话的主对话模型）</option>
-          {chatProviders.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} · {p.chat_model}
-            </option>
-          ))}
-        </select>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          用独立的模型生成会话标题，与主对话并行、互不卡顿。建议选一个快的小模型。
-        </p>
-      </div>
-
       {/* 添加 / 编辑 弹窗 */}
       {modalOpen && (
         <div
@@ -416,7 +430,7 @@ export function ProviderSettings() {
                   checked={form.is_default}
                   onChange={(e) => setField('is_default', e.target.checked)}
                 />
-                设为默认（启用 embedding / RAG）
+                设为默认（同类模型仅保留一个默认）
               </label>
 
               {status.kind === 'error' && (

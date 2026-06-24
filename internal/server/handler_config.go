@@ -23,8 +23,6 @@ func (h *ConfigHandler) Routes(r chi.Router) {
 	r.Post("/providers/test", h.testProvider)
 	r.Put("/providers/{id}", h.updateProvider)
 	r.Delete("/providers/{id}", h.deleteProvider)
-	r.Get("/settings/title-provider", h.getTitleProvider)
-	r.Put("/settings/title-provider", h.setTitleProvider)
 	r.Get("/settings/tool-limit", h.getToolLimit)
 	r.Put("/settings/tool-limit", h.setToolLimit)
 	r.Get("/settings/confirm-mode", h.getConfirmMode)
@@ -69,6 +67,13 @@ func (h *ConfigHandler) createProvider(w http.ResponseWriter, r *http.Request) {
 		APIKey: dto.APIKey, ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel,
 		Kind: dto.Kind, IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
 	}
+	// 设为默认时，先清除同类的旧默认：chat 与 embed 各自只保留一个默认模型。
+	if p.IsDefault {
+		if err := h.DB.ClearDefaultByKind(p.Kind); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
 	if err := h.DB.CreateProvider(p); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -90,6 +95,13 @@ func (h *ConfigHandler) updateProvider(w http.ResponseWriter, r *http.Request) {
 		ID: id, Name: dto.Name, BaseURL: dto.BaseURL, APIKey: dto.APIKey,
 		ChatModel: dto.ChatModel, EmbedModel: dto.EmbedModel, Kind: dto.Kind,
 		IsDefault: dto.IsDefault, CreatedAt: now, UpdatedAt: now,
+	}
+	// 设为默认时，先清除同类的旧默认：chat 与 embed 各自只保留一个默认模型。
+	if p.IsDefault {
+		if err := h.DB.ClearDefaultByKind(p.Kind); err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	if err := h.DB.CreateProvider(p); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -185,29 +197,6 @@ func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
-}
-
-// getTitleProvider / setTitleProvider expose which provider is dedicated to
-// conversation-title generation. The chat handler resolves it per request so
-// the title call runs on its own connection, parallel to the main reply.
-func (h *ConfigHandler) getTitleProvider(w http.ResponseWriter, r *http.Request) {
-	id, _ := h.DB.GetSetting("title_provider_id")
-	writeJSON(w, http.StatusOK, map[string]any{"provider_id": id})
-}
-
-func (h *ConfigHandler) setTitleProvider(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		ProviderID string `json:"provider_id"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if err := h.DB.SetSetting("title_provider_id", body.ProviderID); err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"provider_id": body.ProviderID})
 }
 
 // defaultToolLimit 是工具调用硬上限的默认值。用户未配置时使用，可在齿轮

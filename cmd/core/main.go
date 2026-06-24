@@ -44,12 +44,12 @@ func main() {
 	// 纯内置工具引擎；MCP 按请求在 ChatHandler 内 attach（支持临时限定 server）。
 	baseEngine := tools.NewEngine(registry, gate)
 
-	// Build an embed client + RAG retriever from the default provider, if any.
-	// These enable KB ingest and chat-time RAG; absent a configured provider
-	// they stay nil and those features are disabled gracefully.
+	// Build an embed client + RAG retriever from the default embed provider,
+	// if any. These enable KB ingest and chat-time RAG; absent a configured
+	// embed model they stay nil and those features are disabled gracefully.
 	var embedClient llm.LLMClient
 	var ragRetriever agent.RAGRetriever
-	if def, err := db.GetDefaultProvider(); err == nil && def.EmbedModel != "" {
+	if def, err := db.GetDefaultProviderByKind("embed"); err == nil && def.EmbedModel != "" {
 		embedClient = llm.NewOpenAIClient(llm.Config{
 			BaseURL: def.BaseURL, APIKey: def.APIKey, Model: def.EmbedModel,
 		})

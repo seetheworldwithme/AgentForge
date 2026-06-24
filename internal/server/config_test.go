@@ -118,3 +118,47 @@ func TestConfirmModeDefaultsToManualAndPersists(t *testing.T) {
 		t.Fatalf("invalid mode: expected manual fallback, got %s", body)
 	}
 }
+
+// TestProviderDefaultExclusivePerKind 验证「默认」按类别互斥：连续创建多个
+// 勾选默认的 chat / embed 模型时，每个类别最终只保留一个默认。
+func TestProviderDefaultExclusivePerKind(t *testing.T) {
+	db, _ := store.Open(t.TempDir() + "/default.db")
+	defer db.Close()
+	router := NewRouter(Deps{DB: db})
+
+	mk := func(name, kind string) {
+		postJSON(t, router, "/api/providers", map[string]any{
+			"name": name, "base_url": "http://x", "api_key": "k",
+			"chat_model": "m", "kind": kind, "is_default": true,
+		})
+	}
+	mk("c1", "chat")
+	mk("c2", "chat")
+	mk("e1", "embed")
+	mk("e2", "embed")
+
+	body := getJSON(t, router, "/api/providers")
+	var ps []map[string]any
+	if err := json.Unmarshal([]byte(body), &ps); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	chatDef, embedDef := 0, 0
+	for _, p := range ps {
+		isDef, _ := p["is_default"].(bool)
+		if !isDef {
+			continue
+		}
+		kind, _ := p["kind"].(string)
+		if kind == "embed" {
+			embedDef++
+		} else {
+			chatDef++
+		}
+	}
+	if chatDef != 1 {
+		t.Errorf("chat defaults = %d, want 1", chatDef)
+	}
+	if embedDef != 1 {
+		t.Errorf("embed defaults = %d, want 1", embedDef)
+	}
+}

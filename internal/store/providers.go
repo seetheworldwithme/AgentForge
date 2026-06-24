@@ -46,11 +46,42 @@ func (d *DB) ListProviders() ([]Provider, error) {
 	return out, rows.Err()
 }
 
-// GetDefaultProvider returns the provider flagged is_default=1, if any.
-func (d *DB) GetDefaultProvider() (Provider, error) {
-	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at
-		FROM providers WHERE is_default=1 LIMIT 1`)
+// normalizeKind 把 kind 归一为 "chat" 或 "embed"。空串（以及存储后的
+// NULL）视为 chat，向后兼容 kind 列出现之前的老数据。
+func normalizeKind(kind string) string {
+	if kind == "embed" {
+		return "embed"
+	}
+	return "chat"
+}
+
+// GetDefaultProviderByKind 返回指定类别中标记为默认（is_default=1）的
+// provider。chat 匹配 kind 为 NULL/''/'chat' 的行；embed 匹配 kind='embed'。
+// 没有默认时返回 sql.ErrNoRows。
+func (d *DB) GetDefaultProviderByKind(kind string) (Provider, error) {
+	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,is_default,created_at,updated_at
+		FROM providers WHERE is_default=1 `
+	if normalizeKind(kind) == "embed" {
+		q += `AND kind='embed' `
+	} else {
+		q += `AND (kind IS NULL OR kind='' OR kind='chat') `
+	}
+	q += `LIMIT 1`
+	row := d.sql.QueryRow(q)
 	return scanProvider(row)
+}
+
+// ClearDefaultByKind 清除指定类别下所有 provider 的默认标记，确保设置新
+// 默认后每个类别至多保留一个默认模型。
+func (d *DB) ClearDefaultByKind(kind string) error {
+	var q string
+	if normalizeKind(kind) == "embed" {
+		q = `UPDATE providers SET is_default=0 WHERE kind='embed'`
+	} else {
+		q = `UPDATE providers SET is_default=0 WHERE kind IS NULL OR kind='' OR kind='chat'`
+	}
+	_, err := d.sql.Exec(q)
+	return err
 }
 
 // DeleteProvider removes a provider and clears any references to it. Sessions
