@@ -24,7 +24,7 @@ type Bash struct {
 func (Bash) Spec() tools.Spec {
 	return tools.Spec{
 		Name:        "bash",
-		Description: "Run a shell command. Each call requires user confirmation.",
+		Description: "Run a shell command in the current working directory (the user's selected workspace root). Each call requires user confirmation.",
 		Parameters: `{"type":"object","properties":{
 			"command":{"type":"string"},
 			"timeout":{"type":"integer","description":"seconds, default 30"}

@@ -113,6 +113,7 @@ export interface TreeItem {
 // Chat SSE event names emitted by the agent loop (internal/agent/agent.go).
 export type ChatEventName =
   | 'started'
+  | 'user_saved'
   | 'delta'
   | 'thinking'
   | 'tool_call'

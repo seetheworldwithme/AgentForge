@@ -15,6 +15,7 @@ export async function streamChat(
     attachments?: string[];
     images?: string[];
     regenerate?: boolean;
+    edit_message_id?: string;
   },
   onEvent: (e: ChatEvent) => void,
   signal?: AbortSignal,

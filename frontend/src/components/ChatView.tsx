@@ -10,6 +10,7 @@ export function ChatView() {
   const messages = useSessionStore((s) => s.messages);
   const streaming = useSessionStore((s) => s.streaming);
   const retry = useSessionStore((s) => s.retry);
+  const editAndResend = useSessionStore((s) => s.editAndResend);
   const pendingConfirm = useConfirmStore((s) => s.pending[0]);
   const respondConfirm = useConfirmStore((s) => s.respond);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -27,6 +28,10 @@ export function ChatView() {
   // 这里取会话级开关；retry 内部会定位到最后一条 user。
   const onRetry = () => {
     retry({});
+  };
+  // 编辑某条用户消息后重发：截断其后内容并以新文本重新生成
+  const onEdit = (msgId: string, newText: string) => {
+    editAndResend(msgId, newText, {});
   };
 
   return (
@@ -52,6 +57,7 @@ export function ChatView() {
                     m={m}
                     showActions={isLastAssistant}
                     onRetry={onRetry}
+                    onEdit={onEdit}
                   />
                 );
               })}

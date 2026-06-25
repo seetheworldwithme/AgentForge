@@ -39,8 +39,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const loaded = useConfigStore((s) => s.loaded);
   const load = useConfigStore((s) => s.load);
 
-  // 当前选中的模型；默认取 is_default 或第一个
+  // 当前选中的模型；未手动选择时跟随 is_default（没有默认则取第一个）
   const [providerId, setProviderId] = useState<string>('');
+  // 用户是否手动选过模型：选过则保留其选择，不再自动跟随默认变化
+  const [userPicked, setUserPicked] = useState(false);
   // 工作目录（共享状态，侧边栏分组也依赖它）
   const workDir = useWorkDirStore((s) => s.workdir);
   const wdLoaded = useWorkDirStore((s) => s.loaded);
@@ -62,8 +64,13 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   useEffect(() => {
     if (chatProviders.length === 0) return;
     const def = chatProviders.find((p) => p.is_default);
-    setProviderId((cur) => cur || (def ? def.id : chatProviders[0].id));
-  }, [chatProviders]);
+    const next = def ? def.id : chatProviders[0].id;
+    setProviderId((cur) => {
+      // 用户已手动选择且该模型仍存在 → 尊重选择；否则跟随默认（或回退首个）
+      if (userPicked && cur && chatProviders.some((p) => p.id === cur)) return cur;
+      return next;
+    });
+  }, [chatProviders, userPicked]);
 
   // 初始化读取当前工作目录
   useEffect(() => {
@@ -300,7 +307,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           <IconSelect
             icon="settings"
             value={providerId}
-            onChange={(e) => setProviderId(e.target.value)}
+            onChange={(e) => {
+              setProviderId(e.target.value);
+              setUserPicked(true);
+            }}
             title="选择对话使用的模型"
           >
             {chatProviders.length === 0 && <option value="">未配置模型</option>}

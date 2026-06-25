@@ -16,7 +16,7 @@ type Grep struct{}
 func (Grep) Spec() tools.Spec {
 	return tools.Spec{
 		Name:        "grep",
-		Description: "Recursively search for a substring in files under a path.",
+		Description: "Recursively search for a substring in files under a path (relative to the current working directory).",
 		Parameters: `{"type":"object","properties":{
 			"path":{"type":"string"},
 			"pattern":{"type":"string"}

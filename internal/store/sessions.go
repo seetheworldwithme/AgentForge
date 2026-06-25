@@ -18,7 +18,7 @@ type Message struct {
 	Content    string `json:"content"`
 	ToolCalls  string `json:"tool_calls"` // JSON
 	ToolCallID string `json:"tool_call_id"`
-	Citations  string `json:"citations"` // JSON
+	Citations  string `json:"citations"`          // JSON
 	Thinking   string `json:"thinking,omitempty"` // 推理过程（reasoning_content），仅展示，不回传模型
 	Images     string `json:"images,omitempty"`   // 用户消息图片 dataURL JSON 数组（多模态）
 	TokensIn   int    `json:"tokens_in"`
@@ -101,6 +101,15 @@ func (d *DB) DeleteMessagesFrom(sessionID, since string) error {
 	_, err := d.sql.Exec(
 		`DELETE FROM messages WHERE session_id=? AND created_at > ?`,
 		sessionID, since)
+	return err
+}
+
+// UpdateMessageContent 改写一条消息的正文与图片（「编辑重发」使用）。
+// 仅按 id 定位，刻意不改 created_at——否则会破坏 DeleteMessagesFrom 按时间截断的语义。
+func (d *DB) UpdateMessageContent(sessionID, msgID, content, imagesJSON string) error {
+	_, err := d.sql.Exec(
+		`UPDATE messages SET content=?, images=? WHERE id=? AND session_id=?`,
+		nullable(content), nullable(imagesJSON), msgID, sessionID)
 	return err
 }
 

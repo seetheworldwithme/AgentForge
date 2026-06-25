@@ -23,6 +23,7 @@ export type IconName =
   | 'sun'
   | 'moon'
   | 'check'
+  | 'copy'
   | 'alert-circle'
   | 'loader'
   | 'user'
@@ -140,6 +141,12 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
   check: <path d="M20 6 9 17l-5-5" />,
+  copy: (
+    <>
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </>
+  ),
   'alert-circle': (
     <>
       <circle cx="12" cy="12" r="10" />

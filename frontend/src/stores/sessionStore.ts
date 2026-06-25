@@ -39,6 +39,7 @@ interface SessionState {
       skill_ids?: string[];
     },
   ) => Promise<void>;
+  editAndResend: (msgId: string, newText: string, opts: { provider_id?: string }) => Promise<void>;
   stopStreaming: () => void;
 }
 
@@ -165,6 +166,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  // 编辑重发：定位指定 user 消息，截断其后内容、改写其正文，再以新文本重新生成。
+  // 与 retry 同构，区别在于按 msgId 精确定位（而非最后一条 user）并替换文本。
+  editAndResend: async (msgId, newText, opts) => {
+    const id = get().currentId;
+    if (!id || get().streaming) return;
+    const cur = get().messages;
+    const userIdx = cur.findIndex((m) => m.id === msgId && m.role === 'user');
+    if (userIdx < 0) return;
+    // 乐观更新：截断该 user 之后的内容，改写其正文，并追加一条空 assistant 占位
+    const kept = cur.slice(0, userIdx + 1);
+    kept[userIdx] = { ...kept[userIdx], content: newText };
+    const asstMsg: Message = { id: 'pending-a-' + Date.now(), session_id: id, role: 'assistant', content: '' };
+    set({ messages: [...kept, asstMsg] });
+
+    const abortController = new AbortController();
+    set({ streaming: true, abortController });
+
+    const handle = buildChatHandler(set, get, id);
+    try {
+      // message 传新文本，后端用作 UpdateMessageContent 的 content 源；edit_message_id 用于定位目标 user
+      await streamChat(id, newText, { provider_id: opts.provider_id, edit_message_id: msgId }, handle, abortController.signal);
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === 'AbortError')) {
+        throw e;
+      }
+    } finally {
+      set({ streaming: false, abortController: null });
+    }
+  },
+
   stopStreaming: () => {
     const controller = get().abortController;
     if (controller) {
@@ -181,6 +212,23 @@ function buildChatHandler(
   id: string,
 ) {
   return (e: ChatEvent) => {
+    // 普通发送持久化 user 后回传真实 id：把乐观消息的 pending- id 替换为真实 id，
+    // 使该消息后续可被「编辑重发」按 id 精确定位。
+    if (e.event === 'user_saved') {
+      const realId = e.data?.user_msg_id;
+      if (typeof realId !== 'string' || !realId) return;
+      set((st) => {
+        const msgs = [...st.messages];
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === 'user' && msgs[i].id.startsWith('pending-')) {
+            msgs[i] = { ...msgs[i], id: realId };
+            break;
+          }
+        }
+        return { messages: msgs };
+      });
+      return;
+    }
     // Tool confirmations are routed to the confirm store for the dialog.
     if (e.event === 'confirm_req') {
       useConfirmStore.getState().enqueue({

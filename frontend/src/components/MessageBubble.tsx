@@ -34,16 +34,21 @@ export function MessageBubble({
   m,
   onRetry,
   showActions,
+  onEdit,
 }: {
   m: Message;
   onRetry?: () => void;
   showActions?: boolean;
+  onEdit?: (msgId: string, newText: string) => void;
 }) {
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
   const isWarning = m.variant === 'warning';
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(m.content);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const content = m.role === 'assistant' ? m.content.trimStart() : m.content;
 
   // 思考过程折叠：仅 assistant 且有 thinking 时显示。流式思考中（正文还没出）默认展开并带
@@ -66,6 +71,32 @@ export function MessageBubble({
     setThinkOpen((v) => !v);
   };
 
+  const currentId = useSessionStore((s) => s.currentId);
+  // 就地编辑用户消息：进入时聚焦并自适应高度；Enter 发送、Esc 取消
+  const autosize = () => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 192) + 'px';
+  };
+  const enterEdit = () => {
+    setDraft(m.content);
+    setIsEditing(true);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      autosize();
+    });
+  };
+  const cancelEdit = () => {
+    setDraft(m.content);
+    setIsEditing(false);
+  };
+  const submitEdit = () => {
+    if (!draft.trim()) return;
+    onEdit?.(m.id, draft);
+    setIsEditing(false);
+  };
+
   // 工具调用与结果以 ───────── 分隔，合并展示在一条 tool 消息里
   const sepIdx = isTool ? content.indexOf('\n─────────\n') : -1;
   const hasResult = sepIdx >= 0;
@@ -75,8 +106,10 @@ export function MessageBubble({
 
   if (isTool) {
     return (
-      <div className="my-2">
-        <div className="overflow-hidden rounded-xl border border-border bg-card text-sm shadow-sm">
+      <div className="my-2 flex items-start gap-3">
+        {/* 占位 Avatar 宽度，使工具卡片左边与思考过程 / 正文气泡左边对齐 */}
+        <div className="w-7 shrink-0" aria-hidden="true" />
+        <div className="min-w-0 flex-1 overflow-hidden rounded-xl border border-border bg-card text-sm shadow-sm">
           <button
             className="flex w-full items-start gap-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/40"
             onClick={() => setExpanded(!expanded)}
@@ -150,18 +183,65 @@ export function MessageBubble({
           />
         )}
         {/* 正文气泡：assistant 思考中（正文为空）不显示空气泡，仅展示思考区 */}
-        {!(m.role === 'assistant' && content.trim() === '') && (
-          <div
-            className={
-              'break-words rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ' +
-              (isUser
-                ? 'whitespace-pre-wrap rounded-tr-sm bg-muted text-foreground selection:bg-sky-200 selection:text-sky-900'
-                : 'markdown-body rounded-tl-sm border border-border bg-card text-foreground')
-            }
-          >
-            {isUser ? content : <MarkdownMessage content={content} />}
-          </div>
-        )}
+        {!(m.role === 'assistant' && content.trim() === '') &&
+          (isUser && isEditing ? (
+            // 就地编辑：气泡变为 textarea + 发送/取消；Enter 发送、Esc 取消
+            <div className="w-full min-w-[220px] rounded-2xl rounded-tr-sm border border-primary/40 bg-muted p-1.5 shadow-sm">
+              <textarea
+                ref={textareaRef}
+                rows={2}
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  autosize();
+                }}
+                onKeyDown={(e) => {
+                  // IME 组合期（中文选词回车等）交由输入法处理，不触发发送
+                  if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    submitEdit();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelEdit();
+                  }
+                }}
+                className="max-h-48 min-h-[60px] w-full resize-none bg-transparent px-2 py-1.5 text-sm leading-6 text-foreground outline-none"
+              />
+              <div className="flex items-center justify-end gap-1 pt-1">
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  aria-label="取消"
+                  title="取消 (Esc)"
+                >
+                  <Icon name="x" size={15} />
+                </button>
+                <button
+                  type="button"
+                  disabled={!draft.trim()}
+                  onClick={submitEdit}
+                  className="grid h-6 w-6 place-items-center rounded-md bg-primary text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40"
+                  aria-label="发送"
+                  title="发送 (Enter)"
+                >
+                  <Icon name="arrow-up" size={15} strokeWidth={2.25} />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className={
+                'break-words rounded-2xl px-4 py-2.5 text-sm leading-6 shadow-sm ' +
+                (isUser
+                  ? 'whitespace-pre-wrap rounded-tr-sm bg-muted text-foreground selection:bg-sky-200 selection:text-sky-900'
+                  : 'markdown-body rounded-tl-sm border border-border bg-card text-foreground')
+              }
+            >
+              {isUser ? content : <MarkdownMessage content={content} />}
+            </div>
+          ))}
         {/* 用户消息附带的图片缩略图（Array.isArray 防御：历史数据 images 可能是字符串） */}
         {isUser && Array.isArray(m.images) && m.images.length > 0 && (
           <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
@@ -176,10 +256,42 @@ export function MessageBubble({
             ))}
           </div>
         )}
+        {/* 用户消息操作：复制 / 编辑（icon button）。编辑需真实 session，草稿态仅可复制；流式中隐藏。 */}
+        {isUser && !isEditing && !streaming && currentId && (
+          <div className="mt-1 flex items-center justify-end gap-0.5 px-1">
+            <button
+              type="button"
+              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(m.content);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                } catch {
+                  /* 剪贴板不可用时静默失败 */
+                }
+              }}
+              aria-label="复制"
+              title="复制"
+            >
+              <Icon name={copied ? 'check' : 'copy'} size={14} />
+            </button>
+            <button
+              type="button"
+              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              onClick={enterEdit}
+              aria-label="编辑"
+              title="编辑"
+            >
+              <Icon name="pencil" size={14} />
+            </button>
+          </div>
+        )}
         {!isUser && showActions && (
           <div className="mt-1.5 flex items-center justify-end gap-1 px-1">
             <button
-              className="rounded px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              type="button"
+              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(content);
@@ -189,14 +301,19 @@ export function MessageBubble({
                   /* 剪贴板不可用时静默失败 */
                 }
               }}
+              aria-label="复制"
+              title="复制"
             >
-              {copied ? 'Copied' : 'Copy'}
+              <Icon name={copied ? 'check' : 'copy'} size={14} />
             </button>
             <button
-              className="rounded px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              type="button"
+              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               onClick={onRetry}
+              aria-label="重新回答"
+              title="重新回答"
             >
-              Retry
+              <Icon name="refresh-cw" size={14} />
             </button>
             {m.tps && m.tps > 0 ? (
               <span

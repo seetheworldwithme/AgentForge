@@ -21,13 +21,13 @@ import (
 
 type ChatHandler struct {
 	DB            *store.DB
-	Gate          *tools.Gate // wires tool confirmations onto this chat's SSE stream
-	Engine        *tools.Engine     // 纯内置工具引擎（未 attach mcp）
-	MCP           *mcp.Manager      // 按请求 attach mcp；nil 则不挂载 MCP 工具
+	Gate          *tools.Gate         // wires tool confirmations onto this chat's SSE stream
+	Engine        *tools.Engine       // 纯内置工具引擎（未 attach mcp）
+	MCP           *mcp.Manager        // 按请求 attach mcp；nil 则不挂载 MCP 工具
 	RAG           agent.RAGRetriever  // optional; nil disables RAG
 	Skills        agent.SkillProvider // optional; nil disables skills
 	MCPConfigPath string
-	WorkDir       *tools.WorkDir // optional; nil disables @ file-attachment injection
+	WorkDir       *tools.WorkDir       // optional; nil disables @ file-attachment injection
 	Memory        agent.MemoryProvider // optional; nil disables memory injection
 }
 
@@ -36,15 +36,16 @@ func (h *ChatHandler) Routes(r chi.Router) {
 }
 
 type chatRequest struct {
-	Message      string   `json:"message"`
-	ToolsEnabled *bool    `json:"tools_enabled"`
-	UseRAG       *bool    `json:"use_rag"`
-	ProviderID   *string  `json:"provider_id"`    // optional override; falls back to session's provider
-	PlanMode    *bool    `json:"plan_mode"`   // 本次会话临时开启「计划模式」（只读 + 产出计划）
-	SkillIDs    []string `json:"skill_ids"`   // 本次临时勾选的 skill id（替代全局 enabled）
-	Attachments []string `json:"attachments"` // @ 选中的文件/文件夹相对路径(workdir 下)
-	Regenerate  bool     `json:"regenerate"`  // 重新回答：截断末尾 user 之后的内容并重新生成
-	Images      []string `json:"images,omitempty"` // 用户粘贴的图片 dataURL（多模态，仅视觉模型）
+	Message       string   `json:"message"`
+	ToolsEnabled  *bool    `json:"tools_enabled"`
+	UseRAG        *bool    `json:"use_rag"`
+	ProviderID    *string  `json:"provider_id"`               // optional override; falls back to session's provider
+	PlanMode      *bool    `json:"plan_mode"`                 // 本次会话临时开启「计划模式」（只读 + 产出计划）
+	SkillIDs      []string `json:"skill_ids"`                 // 本次临时勾选的 skill id（替代全局 enabled）
+	Attachments   []string `json:"attachments"`               // @ 选中的文件/文件夹相对路径(workdir 下)
+	Regenerate    bool     `json:"regenerate"`                // 重新回答：截断末尾 user 之后的内容并重新生成
+	EditMessageID string   `json:"edit_message_id,omitempty"` // 编辑重发：定位指定 user，截断其后、改写其文本后重新生成
+	Images        []string `json:"images,omitempty"`          // 用户粘贴的图片 dataURL（多模态，仅视觉模型）
 }
 
 func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +156,34 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			req.Message = ""
 		}
 	}
+
+	// 编辑重发：定位指定 user 消息，删除其后所有内容并改写其正文/图片，再重新生成。
+	// 与 regenerate 对称——本轮 user 由重建后的 history 末尾承担，故 req.Message 置空避免重复持久化。
+	if req.EditMessageID != "" {
+		if em := findMessageByID(storedMsgs, req.EditMessageID); em.ID != "" && em.Role == "user" {
+			if err := h.DB.DeleteMessagesFrom(id, em.CreatedAt); err != nil {
+				log.Printf("[Chat] edit truncate failed session=%s: %v", id, err)
+			}
+			userImages := ""
+			if len(req.Images) > 0 {
+				if b, err := json.Marshal(req.Images); err == nil {
+					userImages = string(b)
+				}
+			}
+			if err := h.DB.UpdateMessageContent(id, req.EditMessageID, req.Message, userImages); err != nil {
+				log.Printf("[Chat] edit update failed session=%s: %v", id, err)
+			}
+			history = history[:0]
+			kept, _ := h.DB.ListMessages(id)
+			for _, m := range kept {
+				history = append(history, storeMsgToLLM(m, prov.Vision))
+			}
+			req.Message = ""
+		} else {
+			log.Printf("[Chat] edit target not found or not user session=%s msg=%s", id, req.EditMessageID)
+		}
+	}
+
 	if req.Message != "" {
 		userMsgID := "msg_" + ulid.Make().String()
 		userImages := ""
@@ -167,6 +196,9 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			ID: userMsgID, SessionID: id, Role: "user", Content: req.Message,
 			Images: userImages, CreatedAt: now,
 		})
+		// 回传真实 user 消息 id：前端乐观消息用的是 pending- 临时 id，收到后替换为
+		// 真实 id，才能在「编辑重发」时按 id 精确定位（见 chatRequest.EditMessageID）。
+		sse.Emit("user_saved", map[string]any{"user_msg_id": userMsgID})
 		// 注意：此处只持久化 user 消息，不把它 append 进 history——本轮 user 由
 		// agent.Run 的 UserMessage 统一追加（见 agent.go），否则模型会收到两条重复
 		// 的 user 消息。firstMessage 已由 len(storedMsgs)==0 判定，不依赖 history 长度。
@@ -264,6 +296,16 @@ func lastUserMessage(msgs []store.Message) store.Message {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role == "user" {
 			return msgs[i]
+		}
+	}
+	return store.Message{}
+}
+
+// findMessageByID 在消息列表中按 id 查找；找不到返回空 Message。用于「编辑重发」定位目标 user。
+func findMessageByID(msgs []store.Message, id string) store.Message {
+	for _, m := range msgs {
+		if m.ID == id {
+			return m
 		}
 	}
 	return store.Message{}
