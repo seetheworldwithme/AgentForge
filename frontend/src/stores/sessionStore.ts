@@ -325,9 +325,14 @@ function buildChatHandler(
           session_id: id, role: 'assistant', content: '',
         });
       } else if (e.event === 'status') {
-        // 工具调用上限：插入一条居中警告气泡，其余 status 仅保活，不渲染。
+        // 工具调用上限：插入一条居中警告气泡。
         if (e.data?.kind === 'tool_limit_reached') {
           const msg = e.data?.message ?? '已达到工具调用上限，不再执行新的工具调用。';
+          return { messages: [...msgs, { id: 'warn-' + Date.now(), session_id: id, role: 'assistant', content: msg, variant: 'warning' }] };
+        }
+        // 上下文窗口压缩：同样插入一条居中提示气泡。
+        if (e.data?.kind === 'context_pruned') {
+          const msg = e.data?.message ?? '已自动压缩较早的工具输出以适应上下文窗口。';
           return { messages: [...msgs, { id: 'warn-' + Date.now(), session_id: id, role: 'assistant', content: msg, variant: 'warning' }] };
         }
         return st;

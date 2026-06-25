@@ -1,36 +1,39 @@
 package store
 
+import "database/sql"
+
 type Provider struct {
-	ID         string
-	Name       string
-	BaseURL    string
-	APIKey     string
-	ChatModel  string
-	EmbedModel string
-	Kind       string // 'chat' | 'embed'；空串视为 chat（向后兼容）
-	Vision     bool   // 视觉(VL)模型：允许粘贴图片
-	IsDefault  bool
-	CreatedAt  string
-	UpdatedAt  string
+	ID            string
+	Name          string
+	BaseURL       string
+	APIKey        string
+	ChatModel     string
+	EmbedModel    string
+	Kind          string // 'chat' | 'embed'；空串视为 chat（向后兼容）
+	Vision        bool   // 视觉(VL)模型：允许粘贴图片
+	ContextWindow int    // 上下文窗口大小 tokens，0=未知用全局默认
+	IsDefault     bool
+	CreatedAt     string
+	UpdatedAt     string
 }
 
 func (d *DB) CreateProvider(p Provider) error {
 	_, err := d.sql.Exec(`INSERT INTO providers
-		(id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		(id,name,base_url,api_key,chat_model,embed_model,kind,vision,context_window,is_default,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.BaseURL, p.APIKey, p.ChatModel, nullable(p.EmbedModel), nullable(p.Kind),
-		boolToText(p.Vision), boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
+		boolToText(p.Vision), p.ContextWindow, boolToInt(p.IsDefault), p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (d *DB) GetProvider(id string) (Provider, error) {
-	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
+	row := d.sql.QueryRow(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,context_window,is_default,created_at,updated_at
 		FROM providers WHERE id=?`, id)
 	return scanProvider(row)
 }
 
 func (d *DB) ListProviders() ([]Provider, error) {
-	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
+	rows, err := d.sql.Query(`SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,context_window,is_default,created_at,updated_at
 		FROM providers ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -57,10 +60,10 @@ func normalizeKind(kind string) string {
 }
 
 // GetDefaultProviderByKind 返回指定类别中标记为默认（is_default=1）的
-// provider。chat 匹配 kind 为 NULL/''/'chat' 的行；embed 匹配 kind='embed'。
+// provider。chat 匹配 kind 为 NULL/”/'chat' 的行；embed 匹配 kind='embed'。
 // 没有默认时返回 sql.ErrNoRows。
 func (d *DB) GetDefaultProviderByKind(kind string) (Provider, error) {
-	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,is_default,created_at,updated_at
+	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,context_window,is_default,created_at,updated_at
 		FROM providers WHERE is_default=1 `
 	if normalizeKind(kind) == "embed" {
 		q += `AND kind='embed' `
@@ -119,9 +122,10 @@ func scanProvider(s scanner) (Provider, error) {
 	var embedModel *string
 	var kind *string
 	var vision *string
+	var contextWindow sql.NullInt64
 	var isDefault int
 	err := s.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKey, &p.ChatModel,
-		&embedModel, &kind, &vision, &isDefault, &p.CreatedAt, &p.UpdatedAt)
+		&embedModel, &kind, &vision, &contextWindow, &isDefault, &p.CreatedAt, &p.UpdatedAt)
 	if embedModel != nil {
 		p.EmbedModel = *embedModel
 	}
@@ -129,6 +133,12 @@ func scanProvider(s scanner) (Provider, error) {
 		p.Kind = *kind
 	}
 	p.Vision = vision != nil && *vision == "1"
+	// context_window 列允许 NULL/无效（老数据迁移后默认 NULL），此时置 0
+	if contextWindow.Valid {
+		p.ContextWindow = int(contextWindow.Int64)
+	} else {
+		p.ContextWindow = 0
+	}
 	p.IsDefault = isDefault != 0
 	return p, err
 }

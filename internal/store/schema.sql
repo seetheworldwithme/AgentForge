@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS providers (
     embed_model TEXT,
     kind        TEXT, -- 'chat' | 'embed'；NULL 视为 chat（向后兼容老数据）
     vision      TEXT, -- '1' = 视觉(VL)模型，允许粘贴图片；NULL/'' = 纯文本
+    context_window INTEGER DEFAULT 0, -- 上下文窗口大小 tokens，0=未知用全局默认
     is_default  INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL

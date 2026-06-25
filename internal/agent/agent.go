@@ -19,6 +19,9 @@ import (
 // its own knowledge) instead of polluting the prompt with low-quality excerpts.
 const ragSimilarityThreshold float32 = 0.3
 
+// defaultContextWindow 是 provider 未配置 context_window 时的全局兜底，当前主流模型普遍 >=200K。
+const defaultContextWindow = 200000
+
 // baseSystemPrompt 建立工具路由策略：明确告诉模型何时必须使用 MCP 工具。
 // 没有它时，模型对图像理解、联网搜索等超出语言模型直接能力的请求，会默认
 // 用 bash 等内置工具去绕，或干脆回答"我做不到"——即使对应的 mcp__ 工具
@@ -221,6 +224,20 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				"message": "工具调用已达到一个安全检查点，任务尚未完成，继续执行后续工具调用。",
 				"iter":    iter,
 			})
+		}
+
+		// 上下文窗口压缩：在发起新一轮 LLM 调用前，按当前模型的 context window
+		// 估算历史 token，超出预算则倒序截断较早的 tool 输出。Pruned=true 时才真正
+		// 替换 history 并发一条 status 气泡告知用户。
+		cw := a.deps.ContextWindow
+		if cw <= 0 {
+			cw = defaultContextWindow
+		}
+		prunedHistory, stats := PruneHistory(history, cw)
+		if stats.Pruned {
+			history = prunedHistory
+			log.Printf("[Agent] context_pruned iter=%d before=%d after=%d saved=%d trimmed=%d", iter, stats.BeforeTokens, stats.AfterTokens, stats.SavedTokens, stats.ToolMsgsTrimmed)
+			in.Emit.Emit("status", map[string]any{"kind": "context_pruned", "message": fmt.Sprintf("已自动压缩较早的工具输出以适应上下文窗口，省下约 %d tokens。", stats.SavedTokens), "stats": stats})
 		}
 
 		stream, streamStart, ok := a.openChatStream(ctx, in.Emit, iter, history, toolSpecs)

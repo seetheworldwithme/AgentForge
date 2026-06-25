@@ -17,6 +17,7 @@ const VENDORS: {
   base_url: string;
   chat_model: string;
   embed_model: string;
+  context_window: number;
 }[] = [
   {
     key: 'openai',
@@ -24,6 +25,7 @@ const VENDORS: {
     base_url: 'https://api.openai.com/v1',
     chat_model: 'gpt-4o-mini',
     embed_model: 'text-embedding-3-small',
+    context_window: 128000,
   },
   {
     key: 'deepseek',
@@ -31,6 +33,7 @@ const VENDORS: {
     base_url: 'https://api.deepseek.com/v1',
     chat_model: 'deepseek-chat',
     embed_model: '',
+    context_window: 64000,
   },
   {
     key: 'anthropic',
@@ -38,6 +41,7 @@ const VENDORS: {
     base_url: 'https://api.anthropic.com/v1',
     chat_model: 'claude-3-5-sonnet-20241022',
     embed_model: '',
+    context_window: 200000,
   },
   {
     key: 'siliconflow',
@@ -45,6 +49,7 @@ const VENDORS: {
     base_url: 'https://api.siliconflow.cn/v1',
     chat_model: 'Qwen/Qwen2.5-72B-Instruct',
     embed_model: 'BAAI/bge-m3',
+    context_window: 131072,
   },
   {
     key: 'zhipu-zai',
@@ -52,6 +57,7 @@ const VENDORS: {
     base_url: 'https://api.z.ai/api/paas/v4',
     chat_model: 'glm-4-flash',
     embed_model: 'embedding-3',
+    context_window: 128000,
   },
   {
     key: 'zhipu-bigmodel',
@@ -59,6 +65,7 @@ const VENDORS: {
     base_url: 'https://open.bigmodel.cn/api/paas/v4',
     chat_model: 'glm-4-flash',
     embed_model: 'embedding-3',
+    context_window: 128000,
   },
   {
     key: 'volcengine',
@@ -66,6 +73,7 @@ const VENDORS: {
     base_url: 'https://ark.cn-beijing.volces.com/api/v3',
     chat_model: 'doubao-1.5-pro-32k',
     embed_model: '',
+    context_window: 32000,
   },
   {
     key: 'qwen',
@@ -73,6 +81,7 @@ const VENDORS: {
     base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     chat_model: 'qwen-plus',
     embed_model: 'text-embedding-v2',
+    context_window: 131072,
   },
   {
     key: 'tencent-hunyuan',
@@ -80,6 +89,7 @@ const VENDORS: {
     base_url: 'https://api.hunyuan.cloud.tencent.com/v1',
     chat_model: 'hunyuan-pro',
     embed_model: '',
+    context_window: 32000,
   },
   {
     key: 'minimax',
@@ -87,6 +97,7 @@ const VENDORS: {
     base_url: 'https://api.minimaxi.com/v1',
     chat_model: 'MiniMax-M3',
     embed_model: '',
+    context_window: 1000000,
   },
   {
     key: 'xiaomi-mimo',
@@ -94,6 +105,7 @@ const VENDORS: {
     base_url: 'https://api.xiaomimimo.com/v1',
     chat_model: 'mimo-v2.5-pro',
     embed_model: '',
+    context_window: 128000,
   },
   {
     key: 'ollama',
@@ -101,6 +113,7 @@ const VENDORS: {
     base_url: 'http://localhost:11434/v1',
     chat_model: 'llama3.1',
     embed_model: 'nomic-embed-text',
+    context_window: 8192,
   },
   {
     key: 'custom',
@@ -108,6 +121,7 @@ const VENDORS: {
     base_url: '',
     chat_model: '',
     embed_model: '',
+    context_window: 0,
   },
 ];
 
@@ -119,6 +133,7 @@ const EMPTY = {
   embed_model: 'text-embedding-3-small',
   is_default: true,
   vision: false,
+  context_window: 200000,
 };
 
 type Form = typeof EMPTY;
@@ -174,6 +189,7 @@ export function ProviderSettings() {
       embed_model: p.embed_model ?? '',
       is_default: p.is_default,
       vision: p.vision ?? false,
+      context_window: p.context_window ?? 0,
     });
     setStatus({ kind: 'idle' });
     // 尝试匹配已有厂商
@@ -199,6 +215,7 @@ export function ProviderSettings() {
       base_url: v.base_url || f.base_url,
       chat_model: v.chat_model || f.chat_model,
       embed_model: v.embed_model || f.embed_model,
+      context_window: v.context_window,
     }));
     setStatus({ kind: 'idle' });
   };
@@ -442,6 +459,20 @@ export function ProviderSettings() {
                     placeholder="Embed model"
                     value={form.embed_model}
                     onChange={(e) => setField('embed_model', e.target.value)}
+                  />
+                )}
+                {category === 'chat' && (
+                  <input
+                    type="number"
+                    className="field col-span-2"
+                    placeholder="上下文窗口（tokens，0=用默认 200000）"
+                    value={form.context_window}
+                    onChange={(e) =>
+                      setField(
+                        'context_window',
+                        e.target.value === '' ? 0 : Number(e.target.value),
+                      )
+                    }
                   />
                 )}
               </div>

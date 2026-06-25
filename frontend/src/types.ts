@@ -10,6 +10,7 @@ export interface Provider {
   embed_model?: string;
   kind?: 'chat' | 'embed'; // 后端持久化；空/缺省视为 chat（向后兼容老数据）
   vision?: boolean; // 视觉(VL)模型：允许在对话框粘贴图片
+  context_window?: number; // 上下文窗口大小 tokens，0=未知用全局默认
   is_default: boolean;
 }
 

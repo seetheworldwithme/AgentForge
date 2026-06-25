@@ -54,4 +54,6 @@ type Deps struct {
 	// Run. When reached, no further tools run and the model is nudged to give
 	// a final answer from the results it already has. 0 = no cap.
 	MaxToolCalls int
+	// ContextWindow 是当前模型的上下文窗口大小（tokens），0=未知，Run 内回退 defaultContextWindow。
+	ContextWindow int
 }

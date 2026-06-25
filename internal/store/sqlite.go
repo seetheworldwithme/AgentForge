@@ -119,6 +119,9 @@ func (d *DB) applyMigrations() error {
 	if err := d.ensureColumn("messages", "images"); err != nil {
 		return err
 	}
+	if err := d.ensureColumnInt("providers", "context_window", 0); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -145,6 +148,34 @@ func (d *DB) ensureColumn(table, col string) error {
 		return err
 	}
 	_, err = d.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s TEXT", table, col))
+	return err
+}
+
+// ensureColumnInt adds an INTEGER column with a default to table if it does not
+// already exist. Mirrors ensureColumn but emits INTEGER DEFAULT instead of TEXT,
+// since ensureColumn hardcodes ADD COLUMN TEXT and can't carry a typed default.
+func (d *DB) ensureColumnInt(table, col string, deflt int64) error {
+	rows, err := d.sql.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt *string
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == col {
+			return nil // 已存在
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = d.sql.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s INTEGER DEFAULT %d", table, col, deflt))
 	return err
 }
 

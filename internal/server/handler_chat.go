@@ -226,7 +226,8 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	chatEngine := mcp.AttachToEngine(h.Engine, h.MCP, nil)
 	a := agent.New(agent.Deps{
 		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills, Memory: h.Memory,
-		MaxToolCalls: toolLimitSetting(h.DB),
+		MaxToolCalls:  toolLimitSetting(h.DB),
+		ContextWindow: effectiveContextWindow(prov),
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()
@@ -327,6 +328,14 @@ func truncateForLog(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "..."
+}
+
+// effectiveContextWindow 返回 provider 的上下文窗口大小；未配置（<=0）时回退全局默认 200000。
+func effectiveContextWindow(p store.Provider) int {
+	if p.ContextWindow > 0 {
+		return p.ContextWindow
+	}
+	return 200000
 }
 
 // titleClient returns the provider used for conversation-title generation.
