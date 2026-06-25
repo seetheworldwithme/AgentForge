@@ -92,6 +92,17 @@ export const api = {
   getSession: (id: string) =>
     jget<{ session: Session; messages: Message[] }>(`/api/sessions/${id}`),
   getMessages: (id: string) => jget<Message[]>(`/api/sessions/${id}/messages`),
+  // 手动压缩会话历史：后端把较早的对话总结为 summary，并裁剪掉原文。
+  // 返回 compacted 表示是否真的执行了压缩；reason 在使用率不足时给出原因。
+  compact: (id: string) =>
+    jpost<{
+      compacted: boolean;
+      reason?: string;
+      removed_count?: number;
+      summary_preview?: string;
+      usage_before?: number;
+      usage_after?: number;
+    }>(`/api/sessions/${id}/compact`, {}),
 
   // --- knowledge bases ---
   listKBs: () => jget<KnowledgeBase[]>('/api/kb'),

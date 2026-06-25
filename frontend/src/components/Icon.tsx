@@ -35,7 +35,8 @@ export type IconName =
   | 'square'
   | 'brain'
   | 'image'
-  | 'zap';
+  | 'zap'
+  | 'archive';
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: (
@@ -209,6 +210,13 @@ const PATHS: Record<IconName, ReactNode> = {
   ),
   zap: (
     <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" />
+  ),
+  archive: (
+    <>
+      <rect width="20" height="5" x="2" y="3" rx="1" />
+      <path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" />
+      <path d="M10 12h4" />
+    </>
   ),
 };
 

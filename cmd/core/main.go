@@ -35,12 +35,13 @@ func main() {
 
 	gate := tools.NewGate()
 	workDir := tools.NewWorkDir()
+	mcpManager := mcp.NewManager(db)
+	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
 	registry := tools.NewRegistry(
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
 		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
+		builtin.ReadSkill{Skills: skillsManager},
 	)
-	mcpManager := mcp.NewManager(db)
-	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
 	// 纯内置工具引擎；MCP 按请求在 ChatHandler 内 attach（支持临时限定 server）。
 	baseEngine := tools.NewEngine(registry, gate)
 

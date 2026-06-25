@@ -26,7 +26,7 @@ export interface Session {
 export interface Message {
   id: string;
   session_id: string;
-  role: 'user' | 'assistant' | 'tool' | 'system';
+  role: 'user' | 'assistant' | 'tool' | 'system' | 'summary';
   content: string;
   thinking?: string; // 推理模型的思考过程（reasoning_content），仅展示，不回传模型
   images?: string[]; // 用户消息附带的图片 dataURL（多模态）

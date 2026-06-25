@@ -20,10 +20,20 @@ type fakeLLM struct {
 	calls        int
 	scriptCalls  int
 	lastMessages []llm.Message
+	// chatCalls 记录 Chat（非流式）被调用次数，用于验证摘要是否真的触发了 LLM 调用。
+	chatCalls int
+	// chatReply 是 Chat 返回的固定文本；默认空串以兼容不依赖摘要的旧测试。
+	chatReply string
+	// chatErr 让 Chat 返回指定错误，用于验证摘要失败时的降级路径。
+	chatErr error
 }
 
 func (f *fakeLLM) Chat(ctx context.Context, msgs []llm.Message) (string, error) {
-	return "", nil
+	f.chatCalls++
+	if f.chatErr != nil {
+		return "", f.chatErr
+	}
+	return f.chatReply, nil
 }
 
 func (f *fakeLLM) ChatStream(ctx context.Context, msgs []llm.Message, ts []llm.ToolSpec) (<-chan llm.Chunk, error) {
@@ -53,7 +63,7 @@ func (f *fakeLLM) Embed(ctx context.Context, in []string) ([][]float32, error) {
 
 type staticSkills string
 
-func (s staticSkills) EnabledInstructions() (string, error) { return string(s), nil }
+func (s staticSkills) IndexInstructions() (string, error) { return string(s), nil }
 
 func (s staticSkills) InstructionsFor(ids []string) (string, error) { return string(s), nil }
 

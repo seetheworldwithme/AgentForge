@@ -139,6 +139,67 @@ func TestManagerListReflectsWorkDirChanges(t *testing.T) {
 	}
 }
 
+// TestManagerIndexInstructionsAndContent 验证按需加载的两个新方法：
+// IndexInstructions 只输出 enabled skill 的 id+name+description 一行（不含 SKILL.md 全文、
+// 不含 disabled），GetSkillContent 按 id 返回全文、未知 id 报错。
+func TestManagerIndexInstructionsAndContent(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "skills.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	root := t.TempDir()
+	writeSkill(t, filepath.Join(root, ".agentforge", "skills", "alpha", "SKILL.md"), "alpha", "Alpha skill for X")
+	writeSkill(t, filepath.Join(root, ".agentforge", "skills", "beta", "SKILL.md"), "beta", "Beta skill for Y")
+
+	m := NewManager(Options{DB: db, GlobalRoot: root})
+
+	items, err := m.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alphaID, betaID string
+	for _, it := range items {
+		switch it.Name {
+		case "alpha":
+			alphaID = it.ID
+		case "beta":
+			betaID = it.ID
+		}
+	}
+	if err := m.SetEnabled(betaID, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// IndexInstructions：只含 enabled skill 的 id+description，不含全文、不含 disabled
+	idx, err := m.IndexInstructions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(idx, alphaID) || !strings.Contains(idx, "Alpha skill for X") {
+		t.Fatalf("index missing enabled skill: %s", idx)
+	}
+	if strings.Contains(idx, "Beta skill") {
+		t.Fatalf("index includes disabled skill: %s", idx)
+	}
+	if strings.Contains(idx, "# alpha") { // SKILL.md 正文标题，索引里不该出现
+		t.Fatalf("index leaked full SKILL.md: %s", idx)
+	}
+
+	// GetSkillContent：按 id 返回全文
+	content, err := m.GetSkillContent(alphaID)
+	if err != nil {
+		t.Fatalf("GetSkillContent: %v", err)
+	}
+	if !strings.Contains(content, "# alpha") {
+		t.Fatalf("GetSkillContent missing full body: %s", content)
+	}
+	if _, err := m.GetSkillContent("global:does-not-exist"); err == nil {
+		t.Fatalf("GetSkillContent should error on unknown id")
+	}
+}
+
 func writeSkill(t *testing.T, path, name, description string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

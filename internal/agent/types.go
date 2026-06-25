@@ -18,9 +18,11 @@ type RAGRetriever interface {
 }
 
 type SkillProvider interface {
-	EnabledInstructions() (string, error)
-	// InstructionsFor 返回指定 id 列表的 skill 指令（忽略 enabled），用于本次
-	// 会话临时勾选某些 skill；空列表返回空串，调用方应回退到 EnabledInstructions。
+	// IndexInstructions 返回精简的 skills 索引（id+name+description），常驻注入；
+	// 模型按需用 read_skill 工具加载某个 skill 的全文。替代旧的全文注入，降低常驻 token。
+	IndexInstructions() (string, error)
+	// InstructionsFor 返回指定 id 列表的 skill 全文指令（忽略 enabled），用于本次
+	// 会话临时勾选某些 skill——勾选即全文注入，省一轮 read_skill 调用。
 	InstructionsFor(ids []string) (string, error)
 }
 

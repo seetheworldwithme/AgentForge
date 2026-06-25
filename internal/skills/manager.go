@@ -156,6 +156,55 @@ func (m *Manager) InstructionsFor(ids []string) (string, error) {
 	return m.instructionsFor(func(item Skill) bool { return set[item.ID] })
 }
 
+// IndexInstructions 返回精简的 skills 索引：每个已启用 skill 一行（id — name: description），
+// 不读取 SKILL.md 全文。常驻注入它即可让模型知道有哪些 skill 及各自用途；当某个 skill
+// 与用户请求相关时，模型通过 read_skill 工具按 id 按需加载全文。相比 EnabledInstructions
+// 的全文注入，常驻 token 开销从「所有 SKILL.md 之和」降到「每个 skill 一行」。
+func (m *Manager) IndexInstructions() (string, error) {
+	items, err := m.List()
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	for _, item := range items {
+		if !item.Enabled {
+			continue
+		}
+		if sb.Len() == 0 {
+			sb.WriteString("Available skills. When the user's request matches one, call the read_skill tool with its id to load full instructions before proceeding.\n")
+		}
+		sb.WriteString("- ")
+		sb.WriteString(item.ID)
+		sb.WriteString(" — ")
+		sb.WriteString(item.Name)
+		if item.Description != "" {
+			sb.WriteString(": ")
+			sb.WriteString(item.Description)
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+// GetSkillContent 按 id 读取单个 skill 的 SKILL.md 全文，供 read_skill 工具按需加载。
+// 找不到对应 id 时返回错误。
+func (m *Manager) GetSkillContent(id string) (string, error) {
+	items, err := m.List()
+	if err != nil {
+		return "", err
+	}
+	for _, item := range items {
+		if item.ID == id {
+			b, err := os.ReadFile(item.Path)
+			if err != nil {
+				return "", err
+			}
+			return string(b), nil
+		}
+	}
+	return "", errors.New("skill not found: " + id)
+}
+
 // instructionsFor 按 keep 谓词筛选 skill，读取其 SKILL.md 并以统一的 XML
 // 格式拼装成系统提示词片段。EnabledInstructions 取 enabled 项；InstructionsFor
 // 取指定 id 项——二者仅筛选条件不同，拼装逻辑一致，避免重复。

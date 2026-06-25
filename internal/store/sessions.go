@@ -119,6 +119,33 @@ func (d *DB) RenameSession(id, title, now string) error {
 	return err
 }
 
+// CompactHistoryPrefix 把某条消息（created_at < beforeCreatedAt）之前的较早历史
+// 替换为单条摘要：先删头，再插摘要。在一个事务内完成，任一步失败即回滚。
+// 用于「上下文压缩」：截断冗长的前置对话，下次加载历史变短，腾出 token 预算。
+// 调用方应把 summary.CreatedAt 设为 beforeCreatedAt 前一刻（如 -1ns），
+// 以保证摘要排在保留的 tail 之前，维持 ListMessages 的时间顺序。
+func (d *DB) CompactHistoryPrefix(sessionID, beforeCreatedAt string, summary Message) error {
+	tx, err := d.sql.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(
+		`DELETE FROM messages WHERE session_id=? AND created_at < ?`,
+		sessionID, beforeCreatedAt); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO messages
+		(id,session_id,role,content,tool_calls,tool_call_id,citations,thinking,images,tokens_in,tokens_out,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		summary.ID, summary.SessionID, summary.Role, nullable(summary.Content), nullable(summary.ToolCalls),
+		nullable(summary.ToolCallID), nullable(summary.Citations), nullable(summary.Thinking), nullable(summary.Images),
+		summary.TokensIn, summary.TokensOut, summary.CreatedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (d *DB) AppendMessage(m Message) error {
 	_, err := d.sql.Exec(`INSERT INTO messages
 		(id,session_id,role,content,tool_calls,tool_call_id,citations,thinking,images,tokens_in,tokens_out,created_at)

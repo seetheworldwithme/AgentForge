@@ -269,8 +269,17 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[Chat] agent_return session=%s duration=%s", id, time.Since(runStart).Round(time.Millisecond))
 
 	persisted := 0
-	for _, msg := range collected.finish() {
-		_ = h.DB.AppendMessage(llmMsgToStore(id, msg))
+	finished := collected.finish()
+	// 把 provider 上报的真实 usage 回填到最后一条 assistant 消息；
+	// 这是持久化用量，仅作用于「无工具调用」收尾的那条纯文本回答。
+	for i, msg := range finished {
+		isLastAssistant := i == len(finished)-1 && msg.Role == llm.RoleAssistant
+		storeMsg := llmMsgToStore(id, msg)
+		if isLastAssistant && collected.lastUsage != nil {
+			storeMsg.TokensIn = collected.lastUsage.InputTokens
+			storeMsg.TokensOut = collected.lastUsage.OutputTokens
+		}
+		_ = h.DB.AppendMessage(storeMsg)
 		persisted++
 	}
 	log.Printf("[Chat] persisted_assistant_turns session=%s count=%d", id, persisted)
@@ -437,8 +446,14 @@ func storeMsgToLLM(m store.Message, vision bool) llm.Message {
 			log.Printf("[Chat] decode tool_calls failed (msg=%s): %v", m.ID, err)
 		}
 	}
+	role := llm.Role(m.Role)
+	// 历史压缩产生的摘要以 summary 角色持久化；回放给 LLM 时改写为 system，
+	// 让模型把它当作背景上下文，而非一条非法的对话角色。
+	if role == "summary" {
+		role = llm.RoleSystem
+	}
 	msg := llm.Message{
-		Role: llm.Role(m.Role), Content: m.Content,
+		Role: role, Content: m.Content,
 		ToolCalls: toolCalls, ToolCallID: m.ToolCallID,
 	}
 	// 仅当当前模型支持视觉时，才把历史用户图片回填为多模态 content；
@@ -473,6 +488,7 @@ type streamCollector struct {
 	pendingThinking  strings.Builder
 	pendingToolCalls []llm.ToolCall
 	messages         []llm.Message
+	lastUsage        *llm.Usage // provider 在 done 事件里上报的真实用量；nil 表示未上报
 }
 
 func (c *streamCollector) appendText(s string) {
@@ -541,6 +557,13 @@ func (m *multiEmitter) Emit(event string, data any) {
 	case "tool_result":
 		if callID, content, ok := toolResultFromEvent(data); ok {
 			m.collector.appendToolResult(callID, content)
+		}
+	case "done":
+		// done 事件携带 provider 上报的真实 usage；缓存下来，持久化时回填到最后一条 assistant。
+		if d, ok := data.(map[string]any); ok {
+			if u, ok := d["usage"].(*llm.Usage); ok {
+				m.collector.lastUsage = u
+			}
 		}
 	}
 	m.sse.Emit(event, data)

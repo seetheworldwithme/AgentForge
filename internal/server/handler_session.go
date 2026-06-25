@@ -20,6 +20,8 @@ import (
 type SessionHandler struct {
 	DB      *store.DB
 	WorkDir *tools.WorkDir // optional; stamped onto new sessions for grouping
+	// buildLLM 把 provider 转成 LLM 客户端用于手动压缩，nil 时 compact 返回 503；由 router 注入。
+	buildLLM func(store.Provider) llm.LLMClient
 }
 
 func (h *SessionHandler) Routes(r chi.Router) {
@@ -29,6 +31,7 @@ func (h *SessionHandler) Routes(r chi.Router) {
 	r.Put("/sessions/{id}", h.update)
 	r.Delete("/sessions/{id}", h.delete)
 	r.Get("/sessions/{id}/messages", h.messages)
+	r.Post("/sessions/{id}/compact", h.Compact)
 }
 
 type sessionDTO struct {

@@ -335,6 +335,11 @@ function buildChatHandler(
           const msg = e.data?.message ?? '已自动压缩较早的工具输出以适应上下文窗口。';
           return { messages: [...msgs, { id: 'warn-' + Date.now(), session_id: id, role: 'assistant', content: msg, variant: 'warning' }] };
         }
+        // 上下文总结：早期对话被总结，插入一条 summary 气泡承载摘要正文。
+        if (e.data?.kind === 'context_summarized') {
+          const msg = e.data?.message ?? '已自动总结较早的对话以适应上下文窗口。';
+          return { messages: [...msgs, { id: 'sum-' + Date.now(), session_id: id, role: 'summary', content: msg, variant: 'warning' }] };
+        }
         return st;
       } else if (e.event === 'done') {
         // 本轮结束：把后端 done 事件携带的精确 tokens/s 记到最后一条 assistant 消息，

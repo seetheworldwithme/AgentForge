@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { Icon } from './Icon';
 import { MarkdownMessage } from './MarkdownMessage';
+import { estimateTokens } from '../lib/tokens';
 import type { Message } from '../types';
 
 // 角色 Avatar：用户=primary 圆头像，助手=描边卡片 + bot 图标。供消息气泡与输入指示器复用。
@@ -44,6 +45,7 @@ export function MessageBubble({
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
   const isWarning = m.variant === 'warning';
+  const isSummary = m.role === 'summary';
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -155,6 +157,28 @@ export function MessageBubble({
         <div className="flex max-w-[90%] items-start gap-2 rounded-xl border border-amber-400/50 bg-amber-400/10 px-3.5 py-2.5 text-sm text-amber-700 dark:text-amber-300">
           <Icon name="alert-circle" size={16} className="mt-0.5 shrink-0" />
           <span className="leading-6">{m.content}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // 摘要消息：早期对话被压缩后的总结，用 sky 色居中卡片承载，正文以 details 折叠。
+  if (isSummary) {
+    return (
+      <div className="my-2.5 flex justify-center">
+        <div className="w-full max-w-[90%] overflow-hidden rounded-xl border border-sky-400/40 bg-sky-400/10 px-3.5 py-2.5 text-sm text-sky-700 dark:text-sky-300">
+          <div className="flex items-center gap-2">
+            <Icon name="archive" size={16} className="shrink-0" />
+            <span className="font-medium">已压缩早期对话</span>
+          </div>
+          <details className="mt-1.5">
+            <summary className="cursor-pointer text-xs text-sky-600/80 hover:text-sky-600 dark:text-sky-400/80">
+              查看摘要
+            </summary>
+            <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-xs leading-5 text-sky-800/90 dark:text-sky-200/90">
+              {m.content}
+            </pre>
+          </details>
         </div>
       </div>
     );
@@ -398,23 +422,6 @@ function ThinkingDots() {
       ))}
     </span>
   );
-}
-
-// 流式期间服务器不逐块返回 token 计数（usage 仅在每轮结束给出一次），实时速率只能
-// 按到达文本估算：CJK 字符 ≈ 1 token，其余 ≈ 4 字符/token。仅作实时跳动参考，
-// 每轮结束后由后端 done 事件给出精确值（m.tps）。
-function estimateTokens(s: string): number {
-  let cjk = 0;
-  let other = 0;
-  for (const ch of s) {
-    const code = ch.codePointAt(0)!;
-    if ((code >= 0x3000 && code <= 0x9fff) || (code >= 0xf900 && code <= 0xfaff) || (code >= 0xff00 && code <= 0xffef)) {
-      cjk++;
-    } else {
-      other++;
-    }
-  }
-  return cjk + other / 4;
 }
 
 // tokens/s 格式化：≥100 取整，否则保留 1 位小数。

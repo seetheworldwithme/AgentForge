@@ -28,7 +28,7 @@ const defaultContextWindow = 200000
 // 已经可用。这里把"先判断任务类型、超出自身能力就用 MCP"作为硬性规则注入。
 const baseSystemPrompt = `你是一个配备了工具集的 AI 助手。你的工具分为两类：
 
-1. 内置工具（bash、file_read、file_write、file_edit、grep）：用于在用户工作目录中执行命令、读写文件与检索内容。
+1. 内置工具（bash、file_read、file_write、file_edit、grep、read_skill）：用于在用户工作目录中执行命令、读写文件与检索内容；read_skill 用于按需加载某个 skill 的完整指令——系统已注入精简的 skills 索引，需要某个 skill 时按其 id 调用 read_skill 取全文再执行。
 2. MCP 扩展工具（工具名以 mcp__ 开头，形如 mcp__<服务>__<能力>）：这些是你自身语言模型能力之外的扩展能力，例如图像/视觉理解、联网搜索、网页阅读、链接深度阅读等。
 
 工具使用原则（务必遵守）：
@@ -134,13 +134,14 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		})
 	}
 	if a.deps.Skills != nil {
-		// 临时勾选优先：本次指定了 SkillIDs 时只注入这些 skill（替代全局 enabled）。
+		// 勾选优先：本次指定 SkillIDs 时直接全文注入这些 skill；否则只注入精简索引，
+		// 模型按需用 read_skill 工具加载全文——避免每轮都把所有 SKILL.md 全文塞进 prompt。
 		var instructions string
 		var err error
 		if len(in.SkillIDs) > 0 {
 			instructions, err = a.deps.Skills.InstructionsFor(in.SkillIDs)
 		} else {
-			instructions, err = a.deps.Skills.EnabledInstructions()
+			instructions, err = a.deps.Skills.IndexInstructions()
 		}
 		if err == nil && strings.TrimSpace(instructions) != "" {
 			history = prependSystemContext(history, instructions)
@@ -209,6 +210,9 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 
 	// toolCallCount 累计本轮 Run 中已执行的工具调用次数，用于 MaxToolCalls 硬上限判定。
 	toolCallCount := 0
+	// summarized 标记本轮 Run 是否已自动摘要过一次。每次 Run 至多摘要 1 次：
+	// 摘要把早期对话压成文本注入 system，已不可逆，避免在循环里反复触发。
+	summarized := false
 	for iter := 0; ; iter++ {
 		// 显式响应取消：避免在 context 已取消时仍发起新一轮 LLM 调用。
 		if err := ctx.Err(); err != nil {
@@ -238,6 +242,36 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 			history = prunedHistory
 			log.Printf("[Agent] context_pruned iter=%d before=%d after=%d saved=%d trimmed=%d", iter, stats.BeforeTokens, stats.AfterTokens, stats.SavedTokens, stats.ToolMsgsTrimmed)
 			in.Emit.Emit("status", map[string]any{"kind": "context_pruned", "message": fmt.Sprintf("已自动压缩较早的工具输出以适应上下文窗口，省下约 %d tokens。", stats.SavedTokens), "stats": stats})
+		}
+
+		// 自动历史摘要：在裁剪 tool 输出之后，若历史仍超预算，则把更早的整段对话压成
+		// 一段文本摘要并注入 system，tail（含最近 tool 配对）原文保留。每次 Run 至多摘要
+		// 1 次（summarized 标记）。需要 a.deps.LLM 才能调用 Chat 生成摘要。
+		if !summarized {
+			sumUsable := cw - pruneOutputReserve - pruneBuffer
+			if sumUsable <= 0 {
+				sumUsable = defaultContextWindow - pruneOutputReserve - pruneBuffer
+			}
+			if a.deps.LLM != nil && EstimateHistoryTokens(history) > sumUsable {
+				sumCtx, sumCancel := context.WithTimeout(ctx, 60*time.Second)
+				res, err := SummarizeHistory(sumCtx, a.deps.LLM, history, sumUsable)
+				sumCancel()
+				if err != nil {
+					log.Printf("[Agent] auto_summarize_failed iter=%d err=%v", iter, err)
+				} else if res.RemovedCount > 0 {
+					// 把摘要注入 system（prependSystemContext 会合并进已有 system，避免双 system），
+					// tail 原样作为新 history。
+					history = prependSystemContext(res.Tail, res.Summary)
+					summarized = true
+					log.Printf("[Agent] context_summarized iter=%d removed=%d head_tokens=%d tail_tokens=%d summary_len=%d",
+						iter, res.RemovedCount, res.HeadTokens, res.TailTokens, len(res.Summary))
+					in.Emit.Emit("status", map[string]any{
+						"kind":          "context_summarized",
+						"message":       fmt.Sprintf("已自动总结较早的 %d 条对话以适应上下文窗口。", res.RemovedCount),
+						"removed_count": res.RemovedCount,
+					})
+				}
+			}
 		}
 
 		stream, streamStart, ok := a.openChatStream(ctx, in.Emit, iter, history, toolSpecs)

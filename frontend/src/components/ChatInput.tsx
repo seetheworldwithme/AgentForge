@@ -4,6 +4,7 @@ import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
 import { useKBStore } from '../stores/kbStore';
 import { api } from '../lib/api';
+import { estimateMessagesTokens, estimateTokens } from '../lib/tokens';
 import { Icon, type IconName } from './Icon';
 import { SlashMenu, type SlashMenuHandle } from './SlashMenu';
 import { FileMenu, type FileMenuHandle } from './FileMenu';
@@ -16,6 +17,10 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const [limitOpen, setLimitOpen] = useState(false);
   const [toolLimit, setToolLimit] = useState(50);
   const [confirmMode, setConfirmMode] = useState<'manual' | 'auto'>('manual');
+  // 手动压缩历史弹窗：open 控制显隐，compacting 标记请求中，compactError 展示失败原因。
+  const [compactOpen, setCompactOpen] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+  const [compactError, setCompactError] = useState('');
 
   // 斜杠菜单的临时勾选状态：仅本次会话生效，切换会话时重置（见下方 effect）。
   const [planMode, setPlanMode] = useState(false);
@@ -34,6 +39,8 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const stopStreaming = useSessionStore((s) => s.stopStreaming);
   const streaming = useSessionStore((s) => s.streaming);
   const sessions = useSessionStore((s) => s.sessions);
+  const messages = useSessionStore((s) => s.messages);
+  const select = useSessionStore((s) => s.select);
 
   const providers = useConfigStore((s) => s.providers);
   const loaded = useConfigStore((s) => s.loaded);
@@ -173,6 +180,39 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   // 当前选中的对话模型是否支持视觉（粘贴图片）。
   const currentProvider = chatProviders.find((p) => p.id === providerId);
   const visionEnabled = !!currentProvider?.vision;
+
+  // 上下文使用率：估算当前会话消息累计 token，对照所选模型的 context_window。
+  // 模型未配置 window（0/缺省）时回退到 200000；canCompact 达到 60% 才允许手动压缩。
+  // Message.tool_calls 为 JSON 字符串，这里按字符串长度并入估算以贴近真实占用。
+  const usageTokens = useMemo(() => {
+    const base = estimateMessagesTokens(messages.map((m) => ({ content: m.content })));
+    let extra = 0;
+    for (const m of messages) {
+      if (m.tool_calls) extra += estimateTokens(m.tool_calls);
+    }
+    return base + extra;
+  }, [messages]);
+  const win = currentProvider && currentProvider.context_window && currentProvider.context_window > 0
+    ? currentProvider.context_window
+    : 200000;
+  const usagePct = Math.min(100, Math.round((usageTokens / win) * 100));
+  const canCompact = usagePct >= 60;
+
+  // 手动压缩：调用后端 /compact，成功后重新加载会话消息以呈现 summary 卡片。
+  const onCompact = async () => {
+    if (!sessionId) return;
+    setCompacting(true);
+    setCompactError('');
+    try {
+      await api.compact(sessionId);
+      await select(sessionId);
+      setCompactOpen(false);
+    } catch (e: any) {
+      setCompactError(e?.message ?? '压缩失败');
+    } finally {
+      setCompacting(false);
+    }
+  };
 
   // 切换到不支持图片的模型时，清空已粘贴的图片并提示。
   useEffect(() => {
@@ -435,6 +475,17 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
               chatProviders.length === 0 ? '请先在设置中配置对话模型…' : '输入消息，Enter 发送…'
             }
           />
+          {sessionId && (
+            <button
+              type="button"
+              className="grid h-9 w-9 shrink-0 place-items-center self-end rounded-xl text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+              onClick={() => setCompactOpen(true)}
+              title={`上下文 ${usageTokens.toLocaleString()} / ${win.toLocaleString()} tokens (${usagePct}%)`}
+              aria-label="上下文使用率"
+            >
+              <ContextRing pct={usagePct} />
+            </button>
+          )}
           <button
             className={
               'grid h-9 w-9 shrink-0 place-items-center self-end rounded-xl text-primary-foreground shadow-sm transition-all active:scale-95 disabled:bg-muted disabled:text-muted-foreground disabled:shadow-none ' +
@@ -463,6 +514,144 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
         onClose={() => setLimitOpen(false)}
         onSave={saveConfig}
       />
+      <CompactDialog
+        open={compactOpen}
+        usageTokens={usageTokens}
+        win={win}
+        usagePct={usagePct}
+        canCompact={canCompact}
+        onCompact={onCompact}
+        compacting={compacting}
+        compactError={compactError}
+        onClose={() => setCompactOpen(false)}
+      />
+    </div>
+  );
+}
+
+// 上下文使用率小圆环：按 pct 绘制填充弧。
+// 颜色分档：< 60 翠绿（宽裕）、60–85 琥珀（偏紧）、>= 85 红色（吃紧）。
+function ContextRing({ pct }: { pct: number }) {
+  const r = 11;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - Math.min(100, Math.max(0, pct)) / 100);
+  // 颜色分档：< 60 翠绿、60–85 琥珀、>= 85 红色。
+  const color = pct < 60 ? '#10b981' : pct < 85 ? '#f59e0b' : '#ef4444';
+  return (
+    <svg width={28} height={28} viewBox="0 0 28 28" className="shrink-0">
+      {/* 背景圆环 */}
+      <circle cx={14} cy={14} r={r} fill="none" stroke="currentColor" strokeOpacity={0.18} strokeWidth={2.5} />
+      {/* 填充弧：从顶部顺时针绘制，stroke-dashoffset 控制已填充比例 */}
+      <circle
+        cx={14}
+        cy={14}
+        r={r}
+        fill="none"
+        stroke={color}
+        strokeWidth={2.5}
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={offset}
+        transform="rotate(-90 14 14)"
+      />
+      {/* 中心百分比数字 */}
+      <text
+        x={14}
+        y={14}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fill="currentColor"
+        fontSize={9}
+        fontWeight={600}
+      >
+        {pct}
+      </text>
+    </svg>
+  );
+}
+
+// 手动压缩历史弹窗：展示上下文用量详情 + 进度条 + 压缩按钮。
+// 使用率未达 60% 时禁用压缩并提示；请求中显示 loader。
+function CompactDialog({
+  open,
+  usageTokens,
+  win,
+  usagePct,
+  canCompact,
+  onCompact,
+  compacting,
+  compactError,
+  onClose,
+}: {
+  open: boolean;
+  usageTokens: number;
+  win: number;
+  usagePct: number;
+  canCompact: boolean;
+  onCompact: () => void;
+  compacting: boolean;
+  compactError: string;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  // 颜色分档与 ContextRing 保持一致。
+  const barColor = usagePct < 60 ? 'bg-emerald-500' : usagePct < 85 ? 'bg-amber-500' : 'bg-red-500';
+  return (
+    <div className="fixed inset-0 z-[100] flex animate-fade-in items-center justify-center bg-black/50 backdrop-blur-sm">
+      <div className="w-[380px] max-w-[92vw] animate-scale-in rounded-2xl border border-border bg-card p-5 shadow-lg">
+        {/* 用量详情 */}
+        <div className="mb-4">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-sm font-medium text-foreground">上下文使用率</span>
+            <span className="text-sm font-semibold text-muted-foreground">{usagePct}%</span>
+          </div>
+          {/* 进度条：颜色随档位变化 */}
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className={'h-full rounded-full transition-all ' + barColor}
+              style={{ width: `${Math.min(100, usagePct)}%` }}
+            />
+          </div>
+          <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+            {usageTokens.toLocaleString()} / {win.toLocaleString()} tokens
+          </p>
+        </div>
+
+        {/* 禁用提示：使用率不足 */}
+        {!canCompact && (
+          <p className="mb-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+            <Icon name="alert-circle" size={12} className="shrink-0" />
+            使用率未达 60%，无需压缩
+          </p>
+        )}
+        {/* 错误提示 */}
+        {compactError && (
+          <p className="mb-3 flex items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+            <Icon name="alert-circle" size={12} className="shrink-0" />
+            {compactError}
+          </p>
+        )}
+
+        <div className="flex items-center justify-end gap-2">
+          <button className="btn-outline gap-1.5 text-muted-foreground" onClick={onClose} disabled={compacting}>
+            <Icon name="x" size={15} />
+            取消
+          </button>
+          <button className="btn-primary gap-1.5" onClick={onCompact} disabled={!canCompact || compacting}>
+            {compacting ? (
+              <>
+                <Icon name="loader" size={15} className="animate-spin" />
+                压缩中…
+              </>
+            ) : (
+              <>
+                <Icon name="archive" size={15} />
+                压缩历史
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

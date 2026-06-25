@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/agent-rust/core/internal/agent"
 	"github.com/agent-rust/core/internal/llm"
@@ -54,7 +55,17 @@ func NewRouter(d Deps) http.Handler {
 
 	r.Route("/api", func(r chi.Router) {
 		(&ConfigHandler{DB: d.DB}).Routes(r)
-		(&SessionHandler{DB: d.DB, WorkDir: d.WorkDir}).Routes(r)
+		// 注入 buildLLM 闭包：手动压缩时按 session 的 provider 现场构造 LLM 客户端，
+		// 构造方式与 ChatHandler 保持一致（含 3 次重试）。
+		(&SessionHandler{
+			DB:      d.DB,
+			WorkDir: d.WorkDir,
+			buildLLM: func(p store.Provider) llm.LLMClient {
+				return llm.NewRetry(llm.NewOpenAIClient(llm.Config{
+					BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
+				}), 3, 500*time.Millisecond)
+			},
+		}).Routes(r)
 		// 注意：Memory 是 agent.MemoryProvider 接口，直接传 *memory.MemoryStore 的 nil
 		// 会得到「非 nil 接口包裹 nil 指针」，导致 agent.Run 误判已启用。故仅当具体值
 		// 非 nil 时才赋值，保持 nil 接口语义。
