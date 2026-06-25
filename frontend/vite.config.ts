@@ -13,7 +13,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target, changeOrigin: true },
+      '/api': { target, changeOrigin: true, ws: true },
       '/events': { target, changeOrigin: true },
       '/healthz': { target, changeOrigin: true },
     },

@@ -116,8 +116,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // optimistic user + assistant message
     const now = Date.now();
-    const userMsg: Message = { id: 'pending-' + now, session_id: id, role: 'user', content: text, images: opts.images };
-    const asstMsg: Message = { id: 'pending-a-' + now, session_id: id, role: 'assistant', content: '' };
+    const ts = new Date(now).toISOString();
+    const userMsg: Message = { id: 'pending-' + now, session_id: id, role: 'user', content: text, images: opts.images, created_at: ts };
+    const asstMsg: Message = { id: 'pending-a-' + now, session_id: id, role: 'assistant', content: '', created_at: ts };
     set({ messages: [...get().messages, userMsg, asstMsg] });
 
     const handle = buildChatHandler(set, get, id);
@@ -148,7 +149,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (userIdx < 0) return;
     // 乐观更新：截断该 user 之后的内容，并追加一条空 assistant 占位
     const kept = cur.slice(0, userIdx + 1);
-    const asstMsg: Message = { id: 'pending-a-' + Date.now(), session_id: id, role: 'assistant', content: '' };
+    const asstMsg: Message = { id: 'pending-a-' + Date.now(), session_id: id, role: 'assistant', content: '', created_at: new Date().toISOString() };
     set({ messages: [...kept, asstMsg] });
 
     const abortController = new AbortController();
@@ -177,7 +178,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // 乐观更新：截断该 user 之后的内容，改写其正文，并追加一条空 assistant 占位
     const kept = cur.slice(0, userIdx + 1);
     kept[userIdx] = { ...kept[userIdx], content: newText };
-    const asstMsg: Message = { id: 'pending-a-' + Date.now(), session_id: id, role: 'assistant', content: '' };
+    const asstMsg: Message = { id: 'pending-a-' + Date.now(), session_id: id, role: 'assistant', content: '', created_at: new Date().toISOString() };
     set({ messages: [...kept, asstMsg] });
 
     const abortController = new AbortController();

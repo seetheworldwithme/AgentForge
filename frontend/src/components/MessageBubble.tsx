@@ -256,74 +256,85 @@ export function MessageBubble({
             ))}
           </div>
         )}
-        {/* 用户消息操作：复制 / 编辑（icon button）。编辑需真实 session，草稿态仅可复制；流式中隐藏。 */}
-        {isUser && !isEditing && !streaming && currentId && (
-          <div className="mt-1 flex items-center justify-end gap-0.5 px-1">
-            <button
-              type="button"
-              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(m.content);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1200);
-                } catch {
-                  /* 剪贴板不可用时静默失败 */
-                }
-              }}
-              aria-label="复制"
-              title="复制"
-            >
-              <Icon name={copied ? 'check' : 'copy'} size={14} />
-            </button>
-            <button
-              type="button"
-              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={enterEdit}
-              aria-label="编辑"
-              title="编辑"
-            >
-              <Icon name="pencil" size={14} />
-            </button>
+        {/* 用户消息 meta 行：左时间戳（始终），右复制/编辑（流式中/草稿态隐藏）。 */}
+        {isUser && !isEditing && (m.created_at || (!streaming && currentId)) && (
+          <div className="mt-1 flex items-center justify-between gap-1 px-1">
+            <span className="text-[11px] text-muted-foreground tabular-nums">{formatTimestamp(m.created_at)}</span>
+            {!streaming && currentId && (
+              <div className="flex items-center gap-0.5">
+                <button
+                  type="button"
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(m.content);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1200);
+                    } catch {
+                      /* 剪贴板不可用时静默失败 */
+                    }
+                  }}
+                  aria-label="复制"
+                  title="复制"
+                >
+                  <Icon name={copied ? 'check' : 'copy'} size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={enterEdit}
+                  aria-label="编辑"
+                  title="编辑"
+                >
+                  <Icon name="pencil" size={14} />
+                </button>
+              </div>
+            )}
           </div>
         )}
-        {!isUser && showActions && (
-          <div className="mt-1.5 flex items-center justify-end gap-1 px-1">
-            <button
-              type="button"
-              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={async () => {
-                try {
-                  await navigator.clipboard.writeText(content);
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1200);
-                } catch {
-                  /* 剪贴板不可用时静默失败 */
-                }
-              }}
-              aria-label="复制"
-              title="复制"
-            >
-              <Icon name={copied ? 'check' : 'copy'} size={14} />
-            </button>
-            <button
-              type="button"
-              className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-              onClick={onRetry}
-              aria-label="重新回答"
-              title="重新回答"
-            >
-              <Icon name="refresh-cw" size={14} />
-            </button>
-            {m.tps && m.tps > 0 ? (
-              <span
-                className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"
-                title="本轮平均生成速率（来自服务器返回的 completion_tokens）"
-              >
-                <Icon name="zap" size={11} strokeWidth={2.25} className="text-primary/70" />
-                {fmtTps(m.tps)} tok/s
-              </span>
-            ) : null}
+        {/* assistant meta 行：左时间戳（始终），右复制/重答/tps（仅最后一条非流式）。 */}
+        {!isUser && (m.created_at || showActions) && (
+          <div className="mt-1.5 flex items-center justify-between gap-1 px-1">
+            <span className="text-[11px] text-muted-foreground tabular-nums">{formatTimestamp(m.created_at)}</span>
+            {showActions && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(content);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1200);
+                    } catch {
+                      /* 剪贴板不可用时静默失败 */
+                    }
+                  }}
+                  aria-label="复制"
+                  title="复制"
+                >
+                  <Icon name={copied ? 'check' : 'copy'} size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  onClick={onRetry}
+                  aria-label="重新回答"
+                  title="重新回答"
+                >
+                  <Icon name="refresh-cw" size={14} />
+                </button>
+                {m.tps && m.tps > 0 ? (
+                  <span
+                    className="ml-1 inline-flex items-center gap-0.5 text-[11px] text-muted-foreground"
+                    title="本轮平均生成速率（来自服务器返回的 completion_tokens）"
+                  >
+                    <Icon name="zap" size={11} strokeWidth={2.25} className="text-primary/70" />
+                    {fmtTps(m.tps)} tok/s
+                  </span>
+                ) : null}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -409,6 +420,18 @@ function estimateTokens(s: string): number {
 // tokens/s 格式化：≥100 取整，否则保留 1 位小数。
 function fmtTps(tps: number): string {
   return tps.toFixed(tps >= 100 ? 0 : 1);
+}
+
+// 时间戳格式化：当天 HH:mm，跨天 MM-DD HH:mm；无值/非法返回空串。tabular-nums 让数字等宽避免跳动。
+function formatTimestamp(iso?: string): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const hh = pad(d.getHours());
+  const mm = pad(d.getMinutes());
+  if (d.toDateString() === new Date().toDateString()) return `${hh}:${mm}`;
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hh}:${mm}`;
 }
 
 // useTokenSpeed 按滑动窗口（最近 1.5s）估算实时 tokens/s。仅当 live 时统计新增文本，

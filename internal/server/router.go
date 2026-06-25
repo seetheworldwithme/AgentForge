@@ -66,6 +66,7 @@ func NewRouter(d Deps) http.Handler {
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
+		(&TerminalHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&SkillsHandler{Manager: d.Skills}).Routes(r)
 		(&MCPHandler{Manager: d.MCP}).Routes(r)
 		if d.Memory != nil {

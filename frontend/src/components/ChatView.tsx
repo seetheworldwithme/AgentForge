@@ -4,6 +4,8 @@ import { MessageBubble, Avatar } from './MessageBubble';
 import { ChatInput } from './ChatInput';
 import { Icon } from './Icon';
 import { useConfirmStore } from '../stores/confirmStore';
+import { useTerminalStore } from '../stores/terminalStore';
+import { TerminalPanel } from './TerminalPanel';
 
 export function ChatView() {
   const currentId = useSessionStore((s) => s.currentId);
@@ -13,11 +15,19 @@ export function ChatView() {
   const editAndResend = useSessionStore((s) => s.editAndResend);
   const pendingConfirm = useConfirmStore((s) => s.pending[0]);
   const respondConfirm = useConfirmStore((s) => s.respond);
+  const panelOpen = useTerminalStore((s) => s.panelOpen);
+  const panelHeight = useTerminalStore((s) => s.panelHeight);
+  const disposeAll = useTerminalStore((s) => s.disposeAll);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // ChatView 卸载时销毁所有终端（关 WS + dispose xterm），切回时全新建。
+  useEffect(() => {
+    return () => disposeAll();
+  }, [disposeAll]);
 
   // 纯等待（连接中、尚无任何数据）才显示顶层三点；思考中（已有 thinking）由气泡内
   // 的思考折叠区接管三点，避免重复。
@@ -36,6 +46,7 @@ export function ChatView() {
 
   return (
     <div className="flex h-full flex-1 flex-col">
+      <ChatTopBar />
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState hasSession={!!currentId} />
@@ -101,7 +112,29 @@ export function ChatView() {
           </div>
         </div>
       )}
+      {panelOpen && <TerminalPanel height={panelHeight} />}
       <ChatInput sessionId={currentId} />
+    </div>
+  );
+}
+
+// 聊天顶部细顶栏：右侧终端按钮，切换底部终端抽屉。
+function ChatTopBar() {
+  const togglePanel = useTerminalStore((s) => s.togglePanel);
+  const panelOpen = useTerminalStore((s) => s.panelOpen);
+  return (
+    <div className="flex h-10 shrink-0 items-center justify-end border-b border-border bg-card px-3">
+      <button
+        type="button"
+        onClick={() => togglePanel()}
+        title="内置终端"
+        className={
+          'grid h-7 w-7 place-items-center rounded-md transition-colors ' +
+          (panelOpen ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground')
+        }
+      >
+        <Icon name="terminal" size={16} />
+      </button>
     </div>
   );
 }

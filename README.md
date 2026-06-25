@@ -82,7 +82,3 @@ make run
 
 - 应用数据：`~/Library/Application Support/agent-rust/`（macOS），含 `app.db`（SQLite）与 `port.lock`。
 - 跨会话记忆：`<工作目录>/.agentforge/memory/`（跟随工作目录，可纳入项目 git）；无工作目录时回退到应用数据目录。
-
-## 备注
-
-- 设计文档（规格 / 实现计划）位于 `docs/`，属本地工作产物，不纳入版本控制。

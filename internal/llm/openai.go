@@ -98,7 +98,7 @@ func toRawMessages(msgs []Message) []rawMsg {
 		for _, tc := range m.ToolCalls {
 			rm.ToolCalls = append(rm.ToolCalls, rawToolCall{
 				ID: tc.ID, Type: "function",
-				Function: rawToolCallFunc{Name: tc.Name, Arguments: tc.Args},
+				Function: rawToolCallFunc{Name: tc.Name, Arguments: sanitizeToolArgs(tc.Args)},
 			})
 		}
 		out = append(out, rm)
@@ -116,6 +116,60 @@ func toRawTools(tools []ToolSpec) []rawTool {
 		}})
 	}
 	return out
+}
+
+// sanitizeToolArgs 修复 tool-call arguments 中未转义的控制字符。
+//
+// 部分模型把多行命令/文本作为工具参数时，会把换行等控制字符以「原始字节」直接写进
+// arguments，使其不是合法 JSON。后端（如 vLLM）会对 arguments 再做一次 json.loads，
+// 遇到字符串值内的原始控制字符即报 "Invalid control character"，导致整轮请求 400。
+//
+// 这里用状态机只在「字符串值内部」把原始控制字符转义为合法 JSON 转义序列
+//（\n \t \r \b \f 或 \u00XX）；字符串外的结构空白（合法 JSON 空白）与已有的
+// 转义序列均保持不变。合法的 arguments 不受影响。
+func sanitizeToolArgs(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inString := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !inString {
+			b.WriteByte(c)
+			if c == '"' {
+				inString = true
+			}
+			continue
+		}
+		switch {
+		case c == '\\': // 保留已有转义序列：原样输出反斜杠与其后一字节
+			b.WriteByte(c)
+			if i+1 < len(s) {
+				i++
+				b.WriteByte(s[i])
+			}
+		case c == '"':
+			inString = false
+			b.WriteByte(c)
+		case c < 0x20: // 字符串值内的原始控制字符 → 转义
+			switch c {
+			case '\n':
+				b.WriteString(`\n`)
+			case '\t':
+				b.WriteString(`\t`)
+			case '\r':
+				b.WriteString(`\r`)
+			case '\b':
+				b.WriteString(`\b`)
+			case '\f':
+				b.WriteString(`\f`)
+			default:
+				fmt.Fprintf(&b, `\u%04x`, c)
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 func (c *OpenAIClient) ChatStream(ctx context.Context, msgs []Message, tools []ToolSpec) (<-chan Chunk, error) {

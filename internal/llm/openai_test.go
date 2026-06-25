@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -162,5 +163,33 @@ func TestChatStreamParsesReasoning(t *testing.T) {
 	}
 	if text.String() != "42" {
 		t.Errorf("text = %q, want %q（reasoning 不得混入正文）", text.String(), "42")
+	}
+}
+
+// TestSanitizeToolArgs 验证 tool-call arguments 中模型误写入的原始控制字符被转义为
+// 合法 JSON，使后端（如 vLLM）对 arguments 的二次 json.loads 不再报
+// "Invalid control character"。合法 arguments 与字符串外的结构空白保持不变。
+func TestSanitizeToolArgs(t *testing.T) {
+	badCases := []string{
+		`{"command":"a` + "\n" + `b"}`, // 字符串值内的真实换行
+		`{"command":"a` + "\t" + `b"}`, // 真实制表符
+		"{\"x\":\"a\x01\"}",            // 其他控制字符
+	}
+	for i, in := range badCases {
+		got := sanitizeToolArgs(in)
+		var v map[string]any
+		if err := json.Unmarshal([]byte(got), &v); err != nil {
+			t.Errorf("case %d: sanitized not valid JSON: %v\n in =%q\n got=%q", i, err, in, got)
+		}
+	}
+	// 合法（已正确转义）的 arguments 应保持不变
+	legal := `{"command":"a\nb"}`
+	if got := sanitizeToolArgs(legal); got != legal {
+		t.Errorf("legal args changed:\n in =%q\n got=%q", legal, got)
+	}
+	// 字符串外的结构空白（换行缩进）应保留
+	pretty := "{\n  \"command\": \"x\"\n}"
+	if got := sanitizeToolArgs(pretty); got != pretty {
+		t.Errorf("structural whitespace changed:\n in =%q\n got=%q", pretty, got)
 	}
 }
