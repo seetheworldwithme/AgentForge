@@ -2,6 +2,7 @@ import { create, type StoreApi } from 'zustand';
 import { api } from '../lib/api';
 import { streamChat } from '../lib/sse';
 import { useConfirmStore } from './confirmStore';
+import { useWorkDirStore } from './workdirStore';
 import type { Session, Message, ChatEvent } from '../types';
 
 interface SessionState {
@@ -62,6 +63,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ currentId: id });
     const res = await api.getSession(id);
     set({ messages: res.messages ?? [] });
+    // 切到该会话所属工作目录：历史会话按 workdir 分组，选中后必须同步工作目录，
+    // 否则 bash、@ 附件等依赖工作目录的能力会作用在错误的目录上。
+    const wd = res.session?.workdir;
+    if (wd) {
+      useWorkDirStore.getState().setWorkDir(wd).catch(() => {});
+    }
   },
 
   create: async (s) => {

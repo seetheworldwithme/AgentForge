@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useConfigStore } from '../stores/configStore';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
@@ -25,7 +25,7 @@ const VENDORS: {
     base_url: 'https://api.openai.com/v1',
     chat_model: 'gpt-4o-mini',
     embed_model: 'text-embedding-3-small',
-    context_window: 128000,
+    context_window: 128,
   },
   {
     key: 'deepseek',
@@ -33,7 +33,7 @@ const VENDORS: {
     base_url: 'https://api.deepseek.com/v1',
     chat_model: 'deepseek-chat',
     embed_model: '',
-    context_window: 64000,
+    context_window: 64,
   },
   {
     key: 'anthropic',
@@ -41,7 +41,7 @@ const VENDORS: {
     base_url: 'https://api.anthropic.com/v1',
     chat_model: 'claude-3-5-sonnet-20241022',
     embed_model: '',
-    context_window: 200000,
+    context_window: 200,
   },
   {
     key: 'siliconflow',
@@ -49,7 +49,7 @@ const VENDORS: {
     base_url: 'https://api.siliconflow.cn/v1',
     chat_model: 'Qwen/Qwen2.5-72B-Instruct',
     embed_model: 'BAAI/bge-m3',
-    context_window: 131072,
+    context_window: 131,
   },
   {
     key: 'zhipu-zai',
@@ -57,7 +57,7 @@ const VENDORS: {
     base_url: 'https://api.z.ai/api/paas/v4',
     chat_model: 'glm-4-flash',
     embed_model: 'embedding-3',
-    context_window: 128000,
+    context_window: 128,
   },
   {
     key: 'zhipu-bigmodel',
@@ -65,7 +65,7 @@ const VENDORS: {
     base_url: 'https://open.bigmodel.cn/api/paas/v4',
     chat_model: 'glm-4-flash',
     embed_model: 'embedding-3',
-    context_window: 128000,
+    context_window: 128,
   },
   {
     key: 'volcengine',
@@ -73,7 +73,7 @@ const VENDORS: {
     base_url: 'https://ark.cn-beijing.volces.com/api/v3',
     chat_model: 'doubao-1.5-pro-32k',
     embed_model: '',
-    context_window: 32000,
+    context_window: 32,
   },
   {
     key: 'qwen',
@@ -81,7 +81,7 @@ const VENDORS: {
     base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     chat_model: 'qwen-plus',
     embed_model: 'text-embedding-v2',
-    context_window: 131072,
+    context_window: 131,
   },
   {
     key: 'tencent-hunyuan',
@@ -89,7 +89,7 @@ const VENDORS: {
     base_url: 'https://api.hunyuan.cloud.tencent.com/v1',
     chat_model: 'hunyuan-pro',
     embed_model: '',
-    context_window: 32000,
+    context_window: 32,
   },
   {
     key: 'minimax',
@@ -97,7 +97,7 @@ const VENDORS: {
     base_url: 'https://api.minimaxi.com/v1',
     chat_model: 'MiniMax-M3',
     embed_model: '',
-    context_window: 1000000,
+    context_window: 1000,
   },
   {
     key: 'xiaomi-mimo',
@@ -105,7 +105,7 @@ const VENDORS: {
     base_url: 'https://api.xiaomimimo.com/v1',
     chat_model: 'mimo-v2.5-pro',
     embed_model: '',
-    context_window: 128000,
+    context_window: 128,
   },
   {
     key: 'ollama',
@@ -113,7 +113,7 @@ const VENDORS: {
     base_url: 'http://localhost:11434/v1',
     chat_model: 'llama3.1',
     embed_model: 'nomic-embed-text',
-    context_window: 8192,
+    context_window: 8,
   },
   {
     key: 'custom',
@@ -156,6 +156,8 @@ export function ProviderSettings() {
   const [vendorKey, setVendorKey] = useState<string>('openai');
   // 模型类别：chat / embed
   const [category, setCategory] = useState<ModelCategory>('chat');
+  // API Key 输入框可见性：默认隐藏，点右侧眼睛切换显示。
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     if (!loaded) load();
@@ -189,7 +191,8 @@ export function ProviderSettings() {
       embed_model: p.embed_model ?? '',
       is_default: p.is_default,
       vision: p.vision ?? false,
-      context_window: p.context_window ?? 0,
+      // 后端存 token，表单用 k：加载时换算为 k（四舍五入，0 保持 0）。
+      context_window: p.context_window ? Math.round(p.context_window / 1000) : 0,
     });
     setStatus({ kind: 'idle' });
     // 尝试匹配已有厂商
@@ -211,7 +214,8 @@ export function ProviderSettings() {
     if (!v) return;
     setForm((f) => ({
       ...f,
-      name: f.name || v.label,
+      // 名称不再手填：选具体厂商时用厂商名；自定义时保留原值（save 时再用模型名兜底）。
+      name: v.key === 'custom' ? f.name : v.label,
       base_url: v.base_url || f.base_url,
       chat_model: v.chat_model || f.chat_model,
       embed_model: v.embed_model || f.embed_model,
@@ -222,16 +226,12 @@ export function ProviderSettings() {
 
   const save = async () => {
     if (status.kind === 'testing') return;
-    if (!form.name.trim()) {
-      setStatus({ kind: 'error', message: '请填写名称' });
-      return;
-    }
     if (category === 'chat' && !form.chat_model.trim()) {
-      setStatus({ kind: 'error', message: '请填写 Chat 模型' });
+      setStatus({ kind: 'error', message: '请填写模型名称' });
       return;
     }
     if (category === 'embed' && !form.embed_model.trim()) {
-      setStatus({ kind: 'error', message: '请填写 Embed 模型' });
+      setStatus({ kind: 'error', message: '请填写模型名称' });
       return;
     }
     setStatus({ kind: 'testing' });
@@ -254,7 +254,13 @@ export function ProviderSettings() {
     }
     try {
       // 持久化类别（chat/embed），供对话下拉框按类别过滤；两个 model 字段都保留。
-      const payload = { ...form, kind: category };
+      // 名称不再手填：用厂商名，自定义时回退模型名；上下文表单是 k，存储换算回 token。
+      const payload = {
+        ...form,
+        kind: category,
+        name: (form.name || form.chat_model || form.embed_model || '未命名').trim(),
+        context_window: form.context_window * 1000,
+      };
       if (editingId) {
         await update(editingId, payload);
         setStatus({ kind: 'success', message: '测试通过，已更新' });
@@ -363,7 +369,7 @@ export function ProviderSettings() {
           >
             <div className="flex items-center justify-between border-b border-border px-5 py-3.5">
               <h3 className="font-semibold text-foreground">
-                {editingId ? '编辑模型（保存前自动测试连通性）' : '添加模型（保存前自动测试连通性）'}
+                {editingId ? '编辑模型' : '添加模型'}
               </h3>
               <button
                 className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
@@ -426,54 +432,64 @@ export function ProviderSettings() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
-                <input
-                  className="field col-span-2"
-                  placeholder="名称（如 OpenAI）"
-                  value={form.name}
-                  onChange={(e) => setField('name', e.target.value)}
-                />
-                <input
-                  className="field col-span-2"
-                  placeholder="Base URL"
-                  value={form.base_url}
-                  onChange={(e) => setField('base_url', e.target.value)}
-                />
-                <input
-                  className="field col-span-2"
-                  placeholder="API Key"
-                  type="password"
-                  value={form.api_key}
-                  onChange={(e) => setField('api_key', e.target.value)}
-                />
-                {category === 'chat' ? (
+              {/* 请求路径 / API Key / 模型名称 / 上下文长度：左侧中文标签 + 右侧输入，无占位提示 */}
+              <div className="space-y-2.5">
+                <FieldRow label="请求路径">
                   <input
-                    className="field col-span-2"
-                    placeholder="Chat model"
-                    value={form.chat_model}
-                    onChange={(e) => setField('chat_model', e.target.value)}
+                    className="field flex-1"
+                    value={form.base_url}
+                    onChange={(e) => setField('base_url', e.target.value)}
                   />
-                ) : (
+                </FieldRow>
+                <FieldRow label="API Key">
+                  <div className="relative flex-1">
+                    <input
+                      className="field w-full pr-9"
+                      type={showApiKey ? 'text' : 'password'}
+                      value={form.api_key}
+                      onChange={(e) => setField('api_key', e.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey((v) => !v)}
+                      className="absolute right-2 top-1/2 grid -translate-y-1/2 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+                      aria-label={showApiKey ? '隐藏 API Key' : '显示 API Key'}
+                      title={showApiKey ? '隐藏' : '显示'}
+                    >
+                      <Icon name={showApiKey ? 'eye-off' : 'eye'} size={15} />
+                    </button>
+                  </div>
+                </FieldRow>
+                <FieldRow label="模型名称">
                   <input
-                    className="field col-span-2"
-                    placeholder="Embed model"
-                    value={form.embed_model}
-                    onChange={(e) => setField('embed_model', e.target.value)}
-                  />
-                )}
-                {category === 'chat' && (
-                  <input
-                    type="number"
-                    className="field col-span-2"
-                    placeholder="上下文窗口（tokens，0=用默认 200000）"
-                    value={form.context_window}
+                    className="field flex-1"
+                    value={category === 'chat' ? form.chat_model : form.embed_model}
                     onChange={(e) =>
                       setField(
-                        'context_window',
-                        e.target.value === '' ? 0 : Number(e.target.value),
+                        category === 'chat' ? 'chat_model' : 'embed_model',
+                        e.target.value,
                       )
                     }
                   />
+                </FieldRow>
+                {category === 'chat' && (
+                  <FieldRow label="上下文长度">
+                    <div className="flex flex-1 items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        className="field flex-1"
+                        value={form.context_window}
+                        onChange={(e) =>
+                          setField(
+                            'context_window',
+                            e.target.value === '' ? 0 : Number(e.target.value),
+                          )
+                        }
+                      />
+                      <span className="shrink-0 text-xs text-muted-foreground">k</span>
+                    </div>
+                  </FieldRow>
                 )}
               </div>
 
@@ -484,7 +500,7 @@ export function ProviderSettings() {
                   checked={form.is_default}
                   onChange={(e) => setField('is_default', e.target.checked)}
                 />
-                设为默认（同类模型仅保留一个默认）
+                设为默认
               </label>
 
               {category === 'chat' && (
@@ -547,4 +563,14 @@ function KindBadge({ kind }: { kind?: 'chat' | 'embed' }) {
     return <span className="status-pill bg-accent text-accent-foreground">向量</span>;
   }
   return <span className="status-pill bg-muted text-muted-foreground">对话</span>;
+}
+
+// FieldRow：左侧固定宽度中文标签 + 右侧输入控件，用于模型表单字段排版。
+function FieldRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-3">
+      <label className="w-24 shrink-0 text-xs font-medium text-muted-foreground">{label}</label>
+      <div className="flex min-w-0 flex-1 items-center">{children}</div>
+    </div>
+  );
 }

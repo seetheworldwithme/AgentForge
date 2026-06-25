@@ -187,7 +187,8 @@ export function MessageBubble({
   return (
     <div className={'my-2.5 flex items-start gap-3 ' + (isUser ? 'flex-row-reverse' : '')}>
       <Avatar role={m.role} />
-      <div className={'max-w-[80%] ' + (isUser ? 'flex flex-col items-end' : '')}>
+      {/* assistant 内容撑满（与工具卡片右边对齐）；user 气泡保持 80% 限宽靠右 */}
+      <div className={isUser ? 'max-w-[80%] flex flex-col items-end' : 'min-w-0 flex-1'}>
         <div className="mb-1 flex items-center gap-1.5 px-1 text-[11px] font-medium text-muted-foreground">
           <span>{isUser ? '你' : 'Assistant'}</span>
           {!isUser && isLive && liveTps > 0 && (

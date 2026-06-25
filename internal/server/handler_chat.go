@@ -57,8 +57,14 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	prov, err := h.DB.GetProvider(sess.ProviderID)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "session has no provider")
-		return
+		// 会话绑定的 provider 已失效（如被删除——DeleteProvider 会把 provider_id 置 NULL），
+		// 回退到默认 chat provider，让老会话仍能续聊，而非直接 400 把整个会话废掉。
+		prov, err = h.DB.GetDefaultProviderByKind("chat")
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "session has no provider and no default chat provider is configured")
+			return
+		}
+		log.Printf("[Chat] provider fallback session=%s bound_provider=%q default_provider=%s", id, sess.ProviderID, prov.ID)
 	}
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
