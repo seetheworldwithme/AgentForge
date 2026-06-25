@@ -12,6 +12,7 @@ export interface TerminalTab {
   fit: FitAddon;
   ws: WebSocket;
   attached: boolean; // 是否已 open 到 DOM（防重入）
+  seq?: number; // 创建序号，用于编号（终端 1/2/3…），基于已有 tabs 递增
 }
 
 // 终端 WebSocket 地址：生产（Wails）直连 127.0.0.1:port；dev 走 vite 同源代理（proxy 已开 ws:true）。

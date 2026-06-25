@@ -1,4 +1,4 @@
-// 终端面板状态：管理多个终端 tab（创建/切换/关闭/全部销毁）与抽屉开关。
+// 终端面板状态：管理多个终端 tab（创建/切换/关闭/全部销毁）与抽屉开关、高度。
 // term/ws 实例随 tab 一起持有；ChatView 卸载时调 disposeAll 释放，避免 term 活着但 DOM 没了。
 import { create } from 'zustand';
 import { createTerminalTab, disposeTab, type TerminalTab } from '../lib/terminal';
@@ -12,11 +12,9 @@ interface TerminalState {
   createTab: () => Promise<void>;
   closeTab: (id: string) => void;
   setActive: (id: string) => void;
+  setHeight: (h: number) => void;
   disposeAll: () => void;
 }
-
-// 终端序号：用于生成稳定递增的 id 与标题（终端 1/2/3…）
-let seq = 0;
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   tabs: [],
@@ -37,12 +35,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   createTab: async () => {
-    seq += 1;
-    const id = `term-${Date.now()}-${seq}`;
-    const title = `终端 ${seq}`;
+    // 编号基于已有 tabs 的最大序号 + 1：首次必为「终端 1」，关闭后重开也不重复
+    const nextSeq = get().tabs.reduce((m, t) => Math.max(m, t.seq ?? 0), 0) + 1;
+    const id = `term-${Date.now()}-${nextSeq}`;
+    const title = `终端 ${nextSeq}`;
     try {
       const tab = await createTerminalTab(id, title);
-      set((s) => ({ tabs: [...s.tabs, tab], activeId: id, panelOpen: true }));
+      set((s) => ({ tabs: [...s.tabs, { ...tab, seq: nextSeq }], activeId: id, panelOpen: true }));
     } catch (e) {
       console.error('创建终端失败', e);
     }
@@ -61,6 +60,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   setActive: (id) => set({ activeId: id }),
+
+  setHeight: (h) => set({ panelHeight: h }),
 
   disposeAll: () => {
     get().tabs.forEach(disposeTab);

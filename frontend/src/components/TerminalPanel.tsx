@@ -14,7 +14,8 @@ export function TerminalPanel({ height }: { height: number }) {
   const setActive = useTerminalStore((s) => s.setActive);
 
   return (
-    <div className="flex shrink-0 flex-col border-t border-border bg-card" style={{ height }}>
+    <div className="flex shrink-0 flex-col bg-card" style={{ height }}>
+      <ResizeHandle />
       {/* tab 栏：左侧各终端 tab + 右侧「+」新建 */}
       <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-muted/30 px-1.5">
         {tabs.map((t) => (
@@ -88,6 +89,39 @@ function TermContainer({ tab, active }: { tab: TerminalTab; active: boolean }) {
       className={
         active ? 'absolute inset-0 overflow-hidden p-1' : 'absolute inset-0 hidden overflow-hidden p-1'
       }
+    />
+  );
+}
+
+// 终端顶部拖拽手柄：上下拖动调整面板高度（向上拖增大）。范围 [120px, 窗口高 75%]。
+// 拖拽期间锁定 body 光标与选区，避免文字被选中；高度变化触发 xterm 容器 ResizeObserver 自动 fit。
+function ResizeHandle() {
+  const panelHeight = useTerminalStore((s) => s.panelHeight);
+  const setHeight = useTerminalStore((s) => s.setHeight);
+
+  return (
+    <div
+      onMouseDown={(e) => {
+        e.preventDefault();
+        const startY = e.clientY;
+        const startH = panelHeight;
+        const onMove = (ev: MouseEvent) => {
+          const h = Math.max(120, Math.min(window.innerHeight * 0.75, startH + (startY - ev.clientY)));
+          setHeight(h);
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+        document.body.style.cursor = 'row-resize';
+        document.body.style.userSelect = 'none';
+      }}
+      className="h-1.5 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary/50"
+      title="拖动调整高度"
     />
   );
 }

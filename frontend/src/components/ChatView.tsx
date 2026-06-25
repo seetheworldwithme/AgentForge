@@ -112,8 +112,8 @@ export function ChatView() {
           </div>
         </div>
       )}
-      {panelOpen && <TerminalPanel height={panelHeight} />}
       <ChatInput sessionId={currentId} />
+      {panelOpen && <TerminalPanel height={panelHeight} />}
     </div>
   );
 }
