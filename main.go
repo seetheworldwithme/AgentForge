@@ -156,6 +156,28 @@ func (d *DialogBinder) OpenDirectory() (string, error) {
 	})
 }
 
+// SaveFile 打开原生保存文件对话框，将 content 写入用户选择的路径。
+// 返回最终保存路径；用户取消时返回空串。
+func (d *DialogBinder) SaveFile(filename string, content string) (string, error) {
+	if d.ctx == nil {
+		return "", nil
+	}
+	path, err := runtime.SaveFileDialog(d.ctx, runtime.SaveDialogOptions{
+		Title:           "保存对话记录",
+		DefaultFilename: filename,
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Markdown (*.md)", Pattern: "*.md"},
+		},
+	})
+	if err != nil || path == "" {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func defaultDataDir() string {
 	base, err := os.UserConfigDir()
 	if err != nil {

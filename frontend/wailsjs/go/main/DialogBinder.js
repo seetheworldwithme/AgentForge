@@ -5,3 +5,7 @@
 export function OpenDirectory() {
   return window['go']['main']['DialogBinder']['OpenDirectory']();
 }
+
+export function SaveFile(arg1, arg2) {
+  return window['go']['main']['DialogBinder']['SaveFile'](arg1, arg2);
+}

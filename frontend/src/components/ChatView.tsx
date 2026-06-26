@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
 import { MessageBubble, Avatar } from './MessageBubble';
 import { ChatInput } from './ChatInput';
@@ -6,6 +6,7 @@ import { Icon } from './Icon';
 import { useConfirmStore } from '../stores/confirmStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import { TerminalPanel } from './TerminalPanel';
+import { exportMessagesToMarkdown, downloadTextFile } from '../lib/exportChat';
 
 export function ChatView() {
   const currentId = useSessionStore((s) => s.currentId);
@@ -118,12 +119,96 @@ export function ChatView() {
   );
 }
 
-// 聊天顶部细顶栏：右侧终端按钮，切换底部终端抽屉。
+// 聊天顶部细顶栏：右侧终端按钮 + 导出按钮。
 function ChatTopBar() {
   const togglePanel = useTerminalStore((s) => s.togglePanel);
   const panelOpen = useTerminalStore((s) => s.panelOpen);
+  const messages = useSessionStore((s) => s.messages);
+  const currentId = useSessionStore((s) => s.currentId);
+  const sessions = useSessionStore((s) => s.sessions);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [includeThinking, setIncludeThinking] = useState(false);
+  const [includeTools, setIncludeTools] = useState(false);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  // 判断是否有可导出的对话内容（非空 user/assistant 消息）
+  const hasExportable = messages.some(
+    (m) =>
+      (m.role === 'user' || m.role === 'assistant') &&
+      m.content.trim().length > 0,
+  );
+
+  // 点击外部关闭导出面板
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (exportRef.current && !exportRef.current.contains(e.target as Node)) {
+        setExportOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [exportOpen]);
+
+  const onExport = async () => {
+    const session = sessions.find((s) => s.id === currentId);
+    const title = session?.title || '对话记录';
+    const md = exportMessagesToMarkdown(messages, title, { includeThinking, includeTools });
+    // 文件名：标题中的中文/特殊字符替换为连字符，避免文件系统问题
+    const safeName = title.replace(/[^\w\u4e00-\u9fa5\-]/g, '_').slice(0, 50) || 'chat';
+    const filename = `${safeName}-${new Date().toISOString().slice(0, 10)}.md`;
+    setExportOpen(false);
+    try {
+      await downloadTextFile(md, filename);
+    } catch (e) {
+      alert('导出失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   return (
-    <div className="flex h-10 shrink-0 items-center justify-end border-b border-border bg-card px-3">
+    <div className="flex h-10 shrink-0 items-center justify-end gap-1 border-b border-border bg-card px-3">
+      {/* 导出弹出面板 */}
+      <div ref={exportRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setExportOpen((v) => !v)}
+          disabled={!hasExportable}
+          title="导出对话为 Markdown"
+          className="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-30"
+        >
+          <Icon name="download" size={16} />
+        </button>
+        {exportOpen && (
+          <div className="absolute right-0 top-8 z-50 w-56 rounded-lg border border-border bg-card p-3 shadow-lg">
+            <div className="mb-1 text-xs font-medium text-muted-foreground">是否包含下面导出项</div>
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 text-sm hover:bg-accent">
+              <input
+                type="checkbox"
+                checked={includeThinking}
+                onChange={(e) => setIncludeThinking(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--primary)]"
+              />
+              <span>思考过程</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1.5 text-sm hover:bg-accent">
+              <input
+                type="checkbox"
+                checked={includeTools}
+                onChange={(e) => setIncludeTools(e.target.checked)}
+                className="h-3.5 w-3.5 accent-[var(--primary)]"
+              />
+              <span>工具调用过程</span>
+            </label>
+            <button
+              type="button"
+              onClick={onExport}
+              className="btn-primary mt-2 w-full justify-center text-sm"
+            >
+              导出
+            </button>
+          </div>
+        )}
+      </div>
       <button
         type="button"
         onClick={() => togglePanel()}
