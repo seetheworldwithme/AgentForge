@@ -6,8 +6,7 @@ import { Icon } from './Icon';
 import { useConfirmStore } from '../stores/confirmStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import { TerminalPanel } from './TerminalPanel';
-import { TodoPanel } from './TodoPanel';
-import { useTodoStore } from '../stores/todoStore';
+import { TodoStrip } from './TodoStrip';
 import { exportMessagesToMarkdown, downloadTextFile } from '../lib/exportChat';
 
 export function ChatView() {
@@ -21,12 +20,33 @@ export function ChatView() {
   const panelOpen = useTerminalStore((s) => s.panelOpen);
   const panelHeight = useTerminalStore((s) => s.panelHeight);
   const disposeAll = useTerminalStore((s) => s.disposeAll);
-  const todoPanelOpen = useTodoStore((s) => s.panelOpen);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // 是否贴底（距离底部 80px 以内），用于决定流式输出时是否自动滚动
+  const stickToBottomRef = useRef(true);
 
+  // 切换会话时重置贴底状态并滚动到底部
   useEffect(() => {
+    stickToBottomRef.current = true;
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [currentId]);
+
+  // 流式输出时仅在用户贴底时自动滚动，避免打断用户查看历史消息。
+  // 用 instant（直接设 scrollTop）而非 smooth：smooth 的滚动动画在流式高频更新下
+  // 会持续把视图拉向底部，即便用户中途上滚也无法打断（"被拉回"的根因）。
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (stickToBottomRef.current && el) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [messages]);
+
+  // 监听滚动：用户手动上滚时标记为非贴底，回到底部附近恢复贴底
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
 
   // ChatView 卸载时销毁所有终端（关 WS + dispose xterm），切回时全新建。
   useEffect(() => {
@@ -51,8 +71,7 @@ export function ChatView() {
   return (
     <div className="flex h-full flex-1 flex-col">
       <ChatTopBar />
-      <div className="flex flex-1 min-h-0">
-        <div className="flex-1 overflow-y-auto">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState hasSession={!!currentId} />
         ) : (
@@ -81,8 +100,6 @@ export function ChatView() {
             <div ref={bottomRef} />
           </div>
         )}
-        </div>
-        {todoPanelOpen && <TodoPanel />}
       </div>
       {pendingConfirm && (
         <div className="border-t border-border bg-card/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
@@ -119,6 +136,7 @@ export function ChatView() {
           </div>
         </div>
       )}
+      <TodoStrip />
       <ChatInput sessionId={currentId} />
       {panelOpen && <TerminalPanel height={panelHeight} />}
     </div>
@@ -129,8 +147,6 @@ export function ChatView() {
 function ChatTopBar() {
   const togglePanel = useTerminalStore((s) => s.togglePanel);
   const panelOpen = useTerminalStore((s) => s.panelOpen);
-  const todoPanelOpen = useTodoStore((s) => s.panelOpen);
-  const toggleTodoPanel = useTodoStore((s) => s.togglePanel);
   const messages = useSessionStore((s) => s.messages);
   const currentId = useSessionStore((s) => s.currentId);
   const sessions = useSessionStore((s) => s.sessions);
@@ -175,18 +191,6 @@ function ChatTopBar() {
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-end gap-1 border-b border-border bg-card px-3">
-      <button
-        type="button"
-        onClick={toggleTodoPanel}
-        title="待办清单"
-        className={
-          todoPanelOpen
-            ? 'grid h-7 w-7 place-items-center rounded-md text-primary transition-colors hover:bg-accent'
-            : 'grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
-        }
-      >
-        <Icon name="check" size={16} />
-      </button>
       {/* 导出弹出面板 */}
       <div ref={exportRef} className="relative">
         <button

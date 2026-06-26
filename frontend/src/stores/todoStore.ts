@@ -6,16 +6,13 @@ import type { TodoItem } from '../types';
 // 切会话时用 load(sid) 拉一次该会话的清单，clear 用于切走/新建时清空。
 interface TodoState {
   items: TodoItem[];
-  panelOpen: boolean;
   load: (sessionId: string) => Promise<void>;
   setItems: (items: TodoItem[]) => void;
-  togglePanel: () => void;
   clear: () => void;
 }
 
 export const useTodoStore = create<TodoState>((set) => ({
   items: [],
-  panelOpen: false,
   load: async (sessionId) => {
     try {
       const { items } = await api.listTodo(sessionId);
@@ -26,6 +23,5 @@ export const useTodoStore = create<TodoState>((set) => ({
     }
   },
   setItems: (items) => set({ items: items ?? [] }),
-  togglePanel: () => set((s) => ({ panelOpen: !s.panelOpen })),
   clear: () => set({ items: [] }),
 }));
