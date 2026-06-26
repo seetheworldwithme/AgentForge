@@ -2,6 +2,9 @@
 # 将 agent-go 分支合并到 main 并推送，最后切回 agent-go
 set -euo pipefail
 
+# 切换到仓库根目录，避免切换分支后当前目录不存在导致报错
+cd "$(git rev-parse --show-toplevel)"
+
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
 # 确保从 agent-go 分支开始
