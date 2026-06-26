@@ -86,18 +86,6 @@ func toolNames(specs []llm.ToolSpec) map[string]bool {
 	return m
 }
 
-// TestClampSubToolCalls 验证子 agent 工具上限收敛：父的 1/3，clamp 到 [5,30]；父无上限给 10。
-func TestClampSubToolCalls(t *testing.T) {
-	cases := []struct{ parent, want int }{
-		{60, 20}, {30, 10}, {90, 30}, {9, 5}, {3, 5}, {100, 30}, {0, 10}, {-1, 10},
-	}
-	for _, c := range cases {
-		if got := clampSubToolCalls(c.parent); got != c.want {
-			t.Errorf("clampSubToolCalls(%d) = %d, want %d", c.parent, got, c.want)
-		}
-	}
-}
-
 // TestDispatchSpecListsSubagents 验证 dispatch 工具的 description 列出三个内置子 agent，
 // 让主 agent 知道有哪些 subagent_type 可选。
 func TestDispatchSpecListsSubagents(t *testing.T) {

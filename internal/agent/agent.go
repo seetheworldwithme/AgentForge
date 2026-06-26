@@ -416,6 +416,10 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 					Role: llm.RoleTool, Content: skipped, ToolCallID: tc.ID,
 				})
 			}
+			// 清空工具列表：下一轮不再向模型暴露任何工具，强制它只能输出最终文本，
+			// 杜绝「模型仍执着调工具 → 再次命中上限 → continue」的死循环
+			// （探索类子 agent 上限低、任务重，最容易触发）。
+			toolSpecs = nil
 			continue
 		}
 

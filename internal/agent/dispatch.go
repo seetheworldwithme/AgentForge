@@ -21,26 +21,9 @@ const dispatchToolName = "dispatch_agent"
 // token，留足主上下文预算；超出尾部截断。
 const subResultMaxChars = 8000
 
-// 子 agent 工具调用上限的上下界：取父 MaxToolCalls 的 1/3 后 clamp 到 [5, 30]；
-// subToolCallsDefault 是父无上限（MaxToolCalls==0）时子的取值。
-const (
-	subToolCallsCapFloor = 5
-	subToolCallsCapCeil  = 30
-	subToolCallsDefault  = 10
-)
-
 // subAgentMaxDuration 是单个子 agent 的最长存活时间；实际取 min(它, 父 ctx 剩余)，
 // 防止子 agent 吃光父的整段预算。
 const subAgentMaxDuration = 10 * time.Minute
-
-// clampSubToolCalls 把父 agent 的工具调用上限收敛为子的上限：取 1/3 并 clamp 到
-// [floor, ceil]；父为 0（无上限）时给默认值。抽出为纯函数便于单测。
-func clampSubToolCalls(parentMax int) int {
-	if parentMax <= 0 {
-		return subToolCallsDefault
-	}
-	return max(subToolCallsCapFloor, min(subToolCallsCapCeil, parentMax/3))
-}
 
 // subagentDef 描述一个内置命名子 agent：它的 persona、给主 agent 的选择提示、
 // 以及只读工具白名单。白名单是"只读"的硬保证（非 prompt 劝阻）：spec 层不暴露
@@ -161,7 +144,7 @@ func dispatchToolSpec() llm.ToolSpec {
     },
     "task": {
       "type": "string",
-      "description": "自包含的子任务描述：目标、范围、期望产出。子 agent 无任何背景，需在描述中给齐信息。"
+      "description": "简洁、自包含的子任务描述：一两句话点明目标与范围即可，让子 agent 自行决定调研深度，不要把详细步骤/清单铺进 task。子 agent 看不到主对话，描述需自包含。"
     }
   },
   "required": ["subagent_type", "task"]
@@ -260,11 +243,13 @@ func (a *Agent) runSubAgent(ctx context.Context, task string, def subagentDef, p
 	subCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
-	// 值拷贝父 deps：Tools 换成白名单 engine（只读），MaxToolCalls 收紧；Asker 清空——
-	// 子 agent 是后台委托任务、给完即停，反问用户会造成困惑，故不暴露 ask_user。
+	// 值拷贝父 deps：Tools 换成白名单 engine（只读）；Asker 清空——子 agent 是后台
+	// 委托任务、给完即停，反问用户会造成困惑，故不暴露 ask_user。
+	// MaxToolCalls 与父一致：子 agent 独立计数（内部工具调用不计入父总数），
+	// 直接复用父的上限，给探索/审查类任务充足配额。
 	subDeps := a.deps
 	subDeps.Tools = whitelistEngine(a.deps.Tools, def.AllowTools)
-	subDeps.MaxToolCalls = clampSubToolCalls(a.deps.MaxToolCalls)
+	subDeps.MaxToolCalls = a.deps.MaxToolCalls
 	subDeps.Asker = nil
 
 	// noDispatch=true：子的 toolSpecs 不暴露 dispatch_agent，杜绝递归。
