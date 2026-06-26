@@ -39,3 +39,4 @@ AGENTS.md
 
 # macOS
 *.DS_Store
+/opencode/
