@@ -1,6 +1,7 @@
 # build artifacts
 /build/
 /dist/
+/release/
 /env/
 *.exe
 *.db-journal
@@ -26,7 +27,6 @@ tsconfig.tsbuildinfo
 /.agents/
 /.agentforge/
 /.claude/
-/scripts/
 
 # 本地配置文件
 CLAUDE.md
