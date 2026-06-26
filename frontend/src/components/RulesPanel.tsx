@@ -62,7 +62,7 @@ export function RulesPanel() {
         <div className="mb-3">
           <h3 className="text-sm font-semibold text-foreground">导入设置</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            开启后，额外读取当前工作目录下对应文件并加入上下文（与 AGENTFORGE.md 叠加生效）。
+            开启后，额外读取当前工作目录下对应文件（与 AGENTFORGE.md 叠加生效）。
           </p>
         </div>
         <div className="flex flex-col gap-1">
@@ -177,15 +177,15 @@ function ImportToggle({
         role="switch"
         aria-checked={on}
         className={
-          'relative h-5 w-9 shrink-0 rounded-full transition-colors ' +
-          (on ? 'bg-primary' : 'bg-muted-foreground/20')
+          'relative h-6 w-11 shrink-0 rounded-full transition-colors ' +
+          (on ? 'bg-primary' : 'bg-muted-foreground/30')
         }
         onClick={() => onToggle(!on)}
       >
         <span
           className={
-            'absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ' +
-            (on ? 'translate-x-4' : 'translate-x-0.5')
+            'absolute left-1 top-1 h-4 w-4 rounded-full bg-white shadow transition-transform ' +
+            (on ? 'translate-x-5' : 'translate-x-0')
           }
         />
       </button>
