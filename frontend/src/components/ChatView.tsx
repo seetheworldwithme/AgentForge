@@ -6,6 +6,8 @@ import { Icon } from './Icon';
 import { useConfirmStore } from '../stores/confirmStore';
 import { useTerminalStore } from '../stores/terminalStore';
 import { TerminalPanel } from './TerminalPanel';
+import { TodoPanel } from './TodoPanel';
+import { useTodoStore } from '../stores/todoStore';
 import { exportMessagesToMarkdown, downloadTextFile } from '../lib/exportChat';
 
 export function ChatView() {
@@ -19,6 +21,7 @@ export function ChatView() {
   const panelOpen = useTerminalStore((s) => s.panelOpen);
   const panelHeight = useTerminalStore((s) => s.panelHeight);
   const disposeAll = useTerminalStore((s) => s.disposeAll);
+  const todoPanelOpen = useTodoStore((s) => s.panelOpen);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,7 +51,8 @@ export function ChatView() {
   return (
     <div className="flex h-full flex-1 flex-col">
       <ChatTopBar />
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex flex-1 min-h-0">
+        <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
           <EmptyState hasSession={!!currentId} />
         ) : (
@@ -77,6 +81,8 @@ export function ChatView() {
             <div ref={bottomRef} />
           </div>
         )}
+        </div>
+        {todoPanelOpen && <TodoPanel />}
       </div>
       {pendingConfirm && (
         <div className="border-t border-border bg-card/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.06)]">
@@ -123,6 +129,8 @@ export function ChatView() {
 function ChatTopBar() {
   const togglePanel = useTerminalStore((s) => s.togglePanel);
   const panelOpen = useTerminalStore((s) => s.panelOpen);
+  const todoPanelOpen = useTodoStore((s) => s.panelOpen);
+  const toggleTodoPanel = useTodoStore((s) => s.togglePanel);
   const messages = useSessionStore((s) => s.messages);
   const currentId = useSessionStore((s) => s.currentId);
   const sessions = useSessionStore((s) => s.sessions);
@@ -167,6 +175,18 @@ function ChatTopBar() {
 
   return (
     <div className="flex h-10 shrink-0 items-center justify-end gap-1 border-b border-border bg-card px-3">
+      <button
+        type="button"
+        onClick={toggleTodoPanel}
+        title="待办清单"
+        className={
+          todoPanelOpen
+            ? 'grid h-7 w-7 place-items-center rounded-md text-primary transition-colors hover:bg-accent'
+            : 'grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+        }
+      >
+        <Icon name="check" size={16} />
+      </button>
       {/* 导出弹出面板 */}
       <div ref={exportRef} className="relative">
         <button

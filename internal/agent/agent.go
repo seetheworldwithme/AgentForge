@@ -222,6 +222,11 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		if !a.noDispatch {
 			toolSpecs = append(toolSpecs, dispatchToolSpec())
 		}
+		// ask_user：模型拿不准、需用户拍板时调用。Asker 为 nil（如子 agent）时不暴露，
+		// 既控制了「仅主 agent 可问」，也免去额外标志位。
+		if a.deps.Asker != nil {
+			toolSpecs = append(toolSpecs, askUserToolSpec())
+		}
 	}
 
 	// toolCallCount 累计本轮 Run 中已执行的工具调用次数，用于 MaxToolCalls 硬上限判定。
@@ -426,9 +431,17 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 				iter, i, tc.ID, tc.Name, truncate(tc.Args, 240))
 			result := tools.Result{Content: "no tools available", IsError: true}
 			var execErr error
-			// 特判 dispatch_agent：agent 原生能力，不走 tools.Engine（它拿不到 LLM）。
-			// 透传 in.PlanMode 给子 agent：plan mode 下子 agent 也只读，防止借派生绕过。
-			if tc.Name == dispatchToolName {
+			// 特判 ask_user：agent 原生能力，需 a.deps.Asker（普通工具在 Engine 构造时拿不到）。
+			// 用 tc.ID 作 Question.ID，前端据此把用户的回答投递回本次阻塞调用。
+			if tc.Name == askUserToolName {
+				if a.deps.Asker == nil {
+					result = tools.Result{Content: "ask_user 未启用", IsError: true}
+				} else {
+					result = a.handleAskUser(ctx, tc.ID, tc.Args)
+				}
+			} else if tc.Name == dispatchToolName {
+				// 特判 dispatch_agent：agent 原生能力，不走 tools.Engine（它拿不到 LLM）。
+				// 透传 in.PlanMode 给子 agent：plan mode 下子 agent 也只读，防止借派生绕过。
 				if a.noDispatch {
 					result = tools.Result{Content: "子 agent 不可派生子 agent（防递归）", IsError: true}
 				} else {

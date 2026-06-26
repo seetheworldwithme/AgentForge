@@ -2,7 +2,9 @@ import { create, type StoreApi } from 'zustand';
 import { api } from '../lib/api';
 import { streamChat } from '../lib/sse';
 import { useConfirmStore } from './confirmStore';
+import { useAskStore } from './askStore';
 import { useWorkDirStore } from './workdirStore';
+import { useTodoStore } from './todoStore';
 import type { Session, Message, ChatEvent } from '../types';
 
 interface SessionState {
@@ -63,6 +65,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ currentId: id });
     const res = await api.getSession(id);
     set({ messages: res.messages ?? [] });
+    // 切会话：清空旧 todo 并拉取该会话的清单（todo 按会话隔离）。
+    useTodoStore.getState().clear();
+    useTodoStore.getState().load(id);
     // 切到该会话所属工作目录：历史会话按 workdir 分组，选中后必须同步工作目录，
     // 否则 bash、@ 附件等依赖工作目录的能力会作用在错误的目录上。
     const wd = res.session?.workdir;
@@ -79,7 +84,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   // 进入空白草稿态：不立即创建 session，侧边栏列表不变。
   // 真正的 session 在用户发送第一条消息时由 send 惰性创建。
-  newChat: () => set({ currentId: null, messages: [] }),
+  newChat: () => {
+    useTodoStore.getState().clear();
+    set({ currentId: null, messages: [] });
+  },
 
   remove: async (id) => {
     await api.deleteSession(id);
@@ -247,6 +255,15 @@ function buildChatHandler(
       });
       return;
     }
+    // Agent 的结构化提问路由到 ask store，由 AskUserDialog 展示。
+    if (e.event === 'ask_user_req') {
+      useAskStore.getState().enqueue({
+        request_id: e.data.request_id ?? e.data.id,
+        question: e.data.question,
+        options: e.data.options ?? [],
+      });
+      return;
+    }
 
     // Auto-generated title for the first turn: update the sidebar entry.
     if (e.event === 'title' && e.data?.title) {
@@ -256,6 +273,12 @@ function buildChatHandler(
           s.id === sid ? { ...s, title: e.data.title } : s,
         ),
       }));
+      return;
+    }
+
+    // todo 进度推送：更新 todo 面板（独立于消息流）。
+    if (e.event === 'todo') {
+      useTodoStore.getState().setItems(e.data?.items ?? []);
       return;
     }
 

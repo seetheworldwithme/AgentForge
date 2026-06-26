@@ -8,9 +8,11 @@
 
 - **多模型供应商**：OpenAI 兼容协议，可配置多个 Provider（对话 / 嵌入），支持视觉（VL）模型与纯文本模型分类，按对话切换。
 - **Agent 工具循环**：多轮工具调用、流式输出、工具确认门控（手动 / 自动放行 / 会话内记忆）、调用次数硬上限。
-- **内置工具**：`bash`、`file_read`、`file_write`、`file_edit`、`grep`、`read_skill`，在当前工作目录操作。
+- **内置工具**：`bash`、`file_read`、`file_write`、`file_edit`、`grep`、`read_skill`，在当前工作目录操作；另有 `todo_create/update/list/delete`（任务跟踪）、`dispatch_agent`（派生子 agent）与 `ask_user`（拿不准时向用户抛结构化选项）。
 - **MCP 扩展**：接入 Model Context Protocol 服务器，补充视觉理解、联网搜索、网页阅读等能力。按会话临时限定可用 MCP server。
 - **上下文窗口管理**：自动裁剪较早的 tool 输出（保留配对完整性），必要时自动摘要历史对话，防长会话爆炸。
+- **子 agent（多 agent 协作）**：主 agent 通过 `dispatch_agent` 派生命名子 agent——`explorer`（只读探索）、`reviewer`（代码审查）、`planner`（产出实施计划），各自独立上下文窗口 + 只读工具白名单，只把结果摘要回传。对标 Claude Code / opencode Subagents。
+- **Todo 任务跟踪**：复杂多步任务用 `todo_create/update/list/delete` 显式跟踪进度（pending→in_progress→completed，一次只允许一个进行中，支持 blocks/blockedBy 任务依赖），右侧面板通过 SSE 实时显示进度看板。
 
 ### 知识与记忆
 
@@ -24,6 +26,7 @@
 - **@ 文件 mention**：把工作目录中的文件 / 文件夹加入对话上下文。
 - **/ 技能选择**：通过斜杠菜单快速勾选技能。
 - **计划模式**：只读调研 + 产出结构化实施计划，禁止写入。
+- **结构化提问（ask_user）**：Agent 遇到必须用户拍板、且无合理默认的决策时，主动给出 2~4 个选项让用户单选或填「其他」，对标 Claude Code 的 AskUserQuestion；与工具确认门控共用「阻塞→SSE→HTTP 回传→恢复」链路。
 - **视觉模型支持**：VL 模型可直接粘贴图片，模型直接看图作答，不重复调用图片识别类 MCP。
 - **推理过程展示**：支持显示推理模型（reasoning model）的思考过程，可折叠。
 - **内嵌终端**：在应用内打开终端面板，与当前工作目录同步。
@@ -46,7 +49,7 @@
 main.go                  # Wails 桌面入口（embed 前端 + 内嵌 core HTTP 服务）
 cmd/core/                # core 服务入口（CLI / 调试，make run）
 internal/
-  agent/                 # Agent 编排：工具循环、系统提示词分层注入、上下文压缩
+  agent/                 # Agent 编排：工具循环、系统提示词分层注入、上下文压缩、子 agent 派生（dispatch.go）
   llm/                   # OpenAI 兼容客户端（chat / embed / 流式 / 重试）
   memory/                # 跨会话记忆：markdown 文件 + frontmatter + 索引 + 读写工具
   mcp/                   # MCP 服务器管理（stdio 客户端 + 工具挂载）
@@ -56,7 +59,8 @@ internal/
   server/                # chi HTTP API + SSE 处理器
   skills/                # 技能系统（全局 + 工作目录，索引注入 + 按需加载）
   store/                 # SQLite 数据层（schema + vec0 向量表 + 增量迁移）
-  tools/                 # 内置工具引擎 + 确认门控（Gate）
+  todo/                  # 会话内待办任务（状态机 + 任务依赖 + SSE 进度推送）
+  tools/                 # 内置工具引擎 + 确认门控（Gate）+ 结构化提问（Asker）
     builtin/             # bash / file_read / file_write / file_edit / grep / read_skill
 frontend/                # React/TS 前端
   src/
@@ -139,6 +143,10 @@ RAG 知识库片段（相似度 ≥ 0.3 的片段）
 - **自动放行**：全局开关，跳过所有确认。
 - **记忆规则**：用户对某工具+参数选择「本次会话 / 永远允许」后，后续匹配的调用自动通过。
 - **手动确认**：通过 SSE 推送确认请求到前端，用户决定后通过 HTTP 回传。
+
+### 结构化提问（ask_user）
+
+与工具确认门控对称的另一条「阻塞→SSE→HTTP 回传→恢复」链路，但语义独立：Agent 拿不准、需用户拍板时调用 `ask_user`（与 `dispatch_agent` 一样在工具循环里特判，不走工具引擎），经独立的 `Asker` 发 `ask_user_req` 事件——`Asker` 不受 Gate 的自动放行 / 记忆规则影响（问题必须到达用户，否则模型拿不到答案）。前端 `AskUserDialog` 让用户单选某项或填「其他」，答案作为 `tool_result` 回传模型，循环继续。子 agent 不暴露此工具。
 
 ## 数据存储
 

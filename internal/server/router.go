@@ -11,6 +11,7 @@ import (
 	"github.com/agent-rust/core/internal/rules"
 	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
+	"github.com/agent-rust/core/internal/todo"
 	"github.com/agent-rust/core/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -29,6 +30,8 @@ type Deps struct {
 	WorkDir     *tools.WorkDir     // optional; shared cwd for filesystem tools
 	Memory      *memory.MemoryStore // optional; nil disables memory feature
 	Rules       *rules.RulesStore   // optional; nil disables rules feature
+	Todo        *todo.Store         // optional; nil disables todo feature
+	Asker       *tools.Asker        // optional; nil disables ask_user
 	UploadDir   string             // optional; defaults to OS temp dir
 }
 
@@ -71,15 +74,19 @@ func NewRouter(d Deps) http.Handler {
 		// 注意：Memory 是 agent.MemoryProvider 接口，直接传 *memory.MemoryStore 的 nil
 		// 会得到「非 nil 接口包裹 nil 指针」，导致 agent.Run 误判已启用。故仅当具体值
 		// 非 nil 时才赋值，保持 nil 接口语义。
-		chat := &ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath, WorkDir: d.WorkDir}
+		chat := &ChatHandler{DB: d.DB, Gate: d.Gate, Engine: d.Engine, MCP: d.MCP, RAG: d.RAG, Skills: skillProvider, MCPConfigPath: mcpConfigPath, WorkDir: d.WorkDir, Asker: d.Asker}
 		if d.Memory != nil {
 			chat.Memory = d.Memory
 		}
 		if d.Rules != nil {
 			chat.Rules = d.Rules
 		}
+		if d.Todo != nil {
+			chat.Todo = d.Todo
+		}
 		chat.Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
+		(&AskHandler{Asker: d.Asker}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&TerminalHandler{WorkDir: d.WorkDir}).Routes(r)
@@ -90,6 +97,9 @@ func NewRouter(d Deps) http.Handler {
 		}
 		if d.Rules != nil {
 			(&RulesHandler{Store: d.Rules, DB: d.DB}).Routes(r)
+		}
+		if d.Todo != nil {
+			(&TodoHandler{Store: d.Todo}).Routes(r)
 		}
 	})
 	return r

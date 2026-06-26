@@ -4,6 +4,7 @@ import { ChatView } from './components/ChatView';
 import { SettingsModal } from './components/SettingsModal';
 import { KnowledgeWorkbench } from './components/KnowledgeWorkbench';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { AskUserDialog } from './components/AskUserDialog';
 import { useConfigStore } from './stores/configStore';
 import { useThemeStore } from './stores/themeStore';
 
@@ -28,6 +29,7 @@ export default function App() {
       {view === 'chat' ? <ChatView /> : <KnowledgeWorkbench />}
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ConfirmDialog />
+      <AskUserDialog />
     </div>
   );
 }

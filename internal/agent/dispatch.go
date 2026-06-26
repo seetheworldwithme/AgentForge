@@ -260,10 +260,12 @@ func (a *Agent) runSubAgent(ctx context.Context, task string, def subagentDef, p
 	subCtx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
-	// 值拷贝父 deps：Tools 换成白名单 engine（只读），MaxToolCalls 收紧。
+	// 值拷贝父 deps：Tools 换成白名单 engine（只读），MaxToolCalls 收紧；Asker 清空——
+	// 子 agent 是后台委托任务、给完即停，反问用户会造成困惑，故不暴露 ask_user。
 	subDeps := a.deps
 	subDeps.Tools = whitelistEngine(a.deps.Tools, def.AllowTools)
 	subDeps.MaxToolCalls = clampSubToolCalls(a.deps.MaxToolCalls)
+	subDeps.Asker = nil
 
 	// noDispatch=true：子的 toolSpecs 不暴露 dispatch_agent，杜绝递归。
 	sub := &Agent{deps: subDeps, noDispatch: true}

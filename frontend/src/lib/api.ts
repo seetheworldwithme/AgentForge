@@ -11,6 +11,7 @@ import type {
   MCPServer,
   TreeItem,
   MemoryEntry,
+  TodoItem,
 } from '../types';
 
 // All network I/O lives here. Components/stores never call fetch directly.
@@ -136,6 +137,10 @@ export const api = {
   confirmTool: (request_id: string, decision: 'allow' | 'deny', remember: string) =>
     jpost('/api/tools/confirm', { request_id, decision, remember }),
 
+  // --- agent 提问回传：用户对 ask_user_req 的单选 / 其他 / 取消 ---
+  askUser: (request_id: string, selection: string, other: string, canceled: boolean) =>
+    jpost('/api/agent/ask', { request_id, selection, other, canceled }),
+
   // --- working directory ---
   getWorkDir: () => jget<{ workdir: string }>('/api/workdir'),
   setWorkDir: (dir: string) => jput<{ workdir: string }>('/api/workdir', { workdir: dir }),
@@ -164,6 +169,10 @@ export const api = {
   saveMemory: (name: string, body: { description: string; type: string; body: string }) =>
     jput<{ name: string }>(`/api/memory/${encodeURIComponent(name)}`, body),
   deleteMemory: (name: string) => jdel(`/api/memory/${encodeURIComponent(name)}`),
+
+  // --- todo（会话内待办，按会话隔离；切会话时前端拉取） ---
+  listTodo: (sessionId: string) =>
+    jget<{ items: TodoItem[] }>(`/api/sessions/${sessionId}/todo`),
 
   // --- rules（项目规则 AGENTFORGE.md + 兼容导入开关） ---
   getRulesContent: (scope: 'global' | 'project') =>

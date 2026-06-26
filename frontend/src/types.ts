@@ -120,11 +120,13 @@ export type ChatEventName =
   | 'thinking'
   | 'tool_call'
   | 'confirm_req'
+  | 'ask_user_req'
   | 'tool_result'
   | 'status'
   | 'title'
   | 'error'
-  | 'done';
+  | 'done'
+  | 'todo';
 
 export interface ChatEvent {
   event: ChatEventName;
@@ -139,6 +141,14 @@ export interface ConfirmReq {
   match_key_hint?: string;
 }
 
+// Payload of an ask_user_req event（routed to the ask store）：Agent 拿不准、需用户
+// 拍板时发出的结构化提问，前端 AskUserDialog 让用户单选某项或填「其他」。
+export interface AskReq {
+  request_id: string;
+  question: string;
+  options: { label: string; description?: string }[];
+}
+
 // 跨会话记忆条目（镜像 internal/memory Entry 的 JSON）。
 export type MemoryType = 'user' | 'feedback' | 'project' | 'reference';
 
@@ -148,4 +158,17 @@ export interface MemoryEntry {
   type: MemoryType;
   body: string;
   updated_at: string;
+}
+
+// 待办任务（镜像 internal/todo Task 的 JSON）。
+export type TodoStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface TodoItem {
+  id: number;
+  subject: string;
+  description?: string;
+  active_form?: string;
+  status: TodoStatus;
+  blocks?: number[];
+  blocked_by?: number[];
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/mcp"
 	"github.com/agent-rust/core/internal/store"
+	"github.com/agent-rust/core/internal/todo"
 	"github.com/agent-rust/core/internal/tools"
 	"github.com/go-chi/chi/v5"
 	"github.com/oklog/ulid/v2"
@@ -30,6 +31,8 @@ type ChatHandler struct {
 	WorkDir       *tools.WorkDir       // optional; nil disables @ file-attachment injection
 	Memory        agent.MemoryProvider // optional; nil disables memory injection
 	Rules         agent.RulesProvider  // optional; nil disables rules injection
+	Todo          *todo.Store          // optional; nil disables todo feature
+	Asker         *tools.Asker         // optional; nil disables ask_user
 }
 
 func (h *ChatHandler) Routes(r chi.Router) {
@@ -55,6 +58,10 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "session not found")
 		return
+	}
+	// 切换当前会话：后续 todo 工具作用于本会话（todo 清单按会话隔离）。
+	if h.Todo != nil {
+		h.Todo.SetCurrent(id)
 	}
 	prov, err := h.DB.GetProvider(sess.ProviderID)
 	if err != nil {
@@ -93,6 +100,14 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 	}
 	sse.Emit("started", map[string]any{"session_id": id})
 
+	// todo 状态变化时推送给前端（实时进度面板）。defer 清理防 stale emitter 泄漏到下一会话。
+	if h.Todo != nil {
+		h.Todo.SetOnChange(func(list []todo.Task) {
+			sse.Emit("todo", map[string]any{"items": list})
+		})
+		defer h.Todo.SetOnChange(nil)
+	}
+
 	// Wire tool confirmations onto this chat's SSE stream. When a dangerous
 	// tool (e.g. bash) calls gate.Request, the gate invokes the emitter, which
 	// emits a confirm_req event here; the UI resolves it via
@@ -114,6 +129,30 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[Chat] confirm_emitted session=%s request_id=%s tool=%s", id, req.ID, req.Tool)
 		})
 		defer h.Gate.SetEmitter(func(tools.ConfirmRequest) {})
+	}
+
+	// 把 ask_user 的结构化提问绑到本 chat 的 SSE 流：Asker.Ask 阻塞时触发这里的
+	// emitter 发 ask_user_req 事件；前端 AskUserDialog 弹卡片，用户作答后 POST
+	// /api/agent/ask 回传，Asker.Resolve 解除阻塞。返回前恢复 no-op，避免泄漏到别的 chat。
+	if h.Asker != nil {
+		h.Asker.SetEmitter(func(q tools.Question) {
+			log.Printf("[Chat] ask_emit session=%s request_id=%s options=%d text=%q",
+				id, q.ID, len(q.Options), truncateForLog(q.Text, 240))
+			opts := make([]map[string]any, 0, len(q.Options))
+			for _, o := range q.Options {
+				m := map[string]any{"label": o.Label}
+				if o.Description != "" {
+					m["description"] = o.Description
+				}
+				opts = append(opts, m)
+			}
+			sse.Emit("ask_user_req", map[string]any{
+				"request_id": q.ID,
+				"question":   q.Text,
+				"options":    opts,
+			})
+		})
+		defer h.Asker.SetEmitter(func(tools.Question) {})
 	}
 
 	// build LLM client with retry
@@ -235,6 +274,7 @@ func (h *ChatHandler) Chat(w http.ResponseWriter, r *http.Request) {
 		LLM: llmClient, Tools: chatEngine, RAG: h.RAG, Skills: h.Skills, Memory: h.Memory, Rules: h.Rules,
 		MaxToolCalls:  toolLimitSetting(h.DB),
 		ContextWindow: effectiveContextWindow(prov),
+		Asker:         h.Asker,
 	})
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Minute)
 	defer cancel()

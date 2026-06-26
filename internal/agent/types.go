@@ -55,6 +55,8 @@ type Deps struct {
 	Skills SkillProvider // may be nil when skills are off
 	Memory MemoryProvider // may be nil when memory is off
 	Rules  RulesProvider  // may be nil when rules are off
+	// Asker 把 ask_user 工具的结构化问题转给用户；nil 时 ask_user 工具不暴露给模型。
+	Asker tools.QuestionAsker
 	// MaxIter is the tool-iteration checkpoint interval: every MaxIter tool
 	// iterations the loop logs and emits a status checkpoint. It is NOT a hard
 	// cap — a task keeps running until it produces a final text answer, hits

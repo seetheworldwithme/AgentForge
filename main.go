@@ -31,6 +31,7 @@ import (
 	"github.com/agent-rust/core/internal/server"
 	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
+	"github.com/agent-rust/core/internal/todo"
 	"github.com/agent-rust/core/internal/tools"
 	"github.com/agent-rust/core/internal/tools/builtin"
 )
@@ -52,13 +53,16 @@ func main() {
 	defer db.Close()
 
 	gate := tools.NewGate()
+	asker := tools.NewAsker()
 	workDir := tools.NewWorkDir()
 	memStore := memory.New(workDir.Get, *dataDir)
+	todoStore := todo.New()
 	allTools := []tools.Tool{
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
 		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
 	}
 	allTools = append(allTools, memory.Tools(memStore)...)
+	allTools = append(allTools, todo.Tools(todoStore)...)
 	registry := tools.NewRegistry(allTools...)
 	mcpManager := mcp.NewManager(db)
 	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
@@ -79,10 +83,11 @@ func main() {
 	}
 
 	router := server.NewRouter(server.Deps{
-		DB: db, Gate: gate, Engine: baseEngine,
+		DB: db, Gate: gate, Asker: asker, Engine: baseEngine,
 		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
 		Memory: memStore,
 		Rules: rulesStore,
+		Todo: todoStore,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 
