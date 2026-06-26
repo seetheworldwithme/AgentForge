@@ -8,6 +8,7 @@ import (
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/mcp"
 	"github.com/agent-rust/core/internal/memory"
+	"github.com/agent-rust/core/internal/rules"
 	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/agent-rust/core/internal/tools"
@@ -27,6 +28,7 @@ type Deps struct {
 	MCP         *mcp.Manager       // optional; nil disables MCP tools/settings
 	WorkDir     *tools.WorkDir     // optional; shared cwd for filesystem tools
 	Memory      *memory.MemoryStore // optional; nil disables memory feature
+	Rules       *rules.RulesStore   // optional; nil disables rules feature
 	UploadDir   string             // optional; defaults to OS temp dir
 }
 
@@ -73,6 +75,9 @@ func NewRouter(d Deps) http.Handler {
 		if d.Memory != nil {
 			chat.Memory = d.Memory
 		}
+		if d.Rules != nil {
+			chat.Rules = d.Rules
+		}
 		chat.Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
@@ -82,6 +87,9 @@ func NewRouter(d Deps) http.Handler {
 		(&MCPHandler{Manager: d.MCP}).Routes(r)
 		if d.Memory != nil {
 			(&MemoryHandler{Store: d.Memory}).Routes(r)
+		}
+		if d.Rules != nil {
+			(&RulesHandler{Store: d.Rules, DB: d.DB}).Routes(r)
 		}
 	})
 	return r

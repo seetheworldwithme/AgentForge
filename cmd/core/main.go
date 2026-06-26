@@ -12,6 +12,7 @@ import (
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/mcp"
 	"github.com/agent-rust/core/internal/rag"
+	"github.com/agent-rust/core/internal/rules"
 	"github.com/agent-rust/core/internal/server"
 	"github.com/agent-rust/core/internal/skills"
 	"github.com/agent-rust/core/internal/store"
@@ -37,6 +38,7 @@ func main() {
 	workDir := tools.NewWorkDir()
 	mcpManager := mcp.NewManager(db)
 	skillsManager := skills.NewManager(skills.Options{DB: db, WorkDir: workDir.Get})
+	rulesStore := rules.New(rules.Options{WorkDir: workDir.Get, DB: db})
 	registry := tools.NewRegistry(
 		builtin.FileRead{}, builtin.FileWrite{}, builtin.FileEdit{},
 		builtin.Grep{}, builtin.Bash{WorkDir: workDir},
@@ -60,6 +62,7 @@ func main() {
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: baseEngine,
 		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
+		Rules: rulesStore,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})
 

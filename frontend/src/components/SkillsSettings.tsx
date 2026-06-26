@@ -145,7 +145,7 @@ export function SkillsSettings() {
                   </span>
                 </div>
                 {skill.description && (
-                  <div className="mt-1 text-xs text-muted-foreground">{skill.description}</div>
+                  <div className="mt-1 line-clamp-2 break-words text-xs text-muted-foreground">{skill.description}</div>
                 )}
                 <div className="mt-1 truncate font-mono text-[11px] text-muted-foreground">
                   {skill.path}

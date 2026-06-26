@@ -255,10 +255,12 @@ export function ProviderSettings() {
     try {
       // 持久化类别（chat/embed），供对话下拉框按类别过滤；两个 model 字段都保留。
       // 名称不再手填：用厂商名，自定义时回退模型名；上下文表单是 k，存储换算回 token。
+      // 自定义厂商：名称固定为「自定义」（列表里也不再展示模型名）；其它厂商用厂商名。
+      const isCustomVendor = vendorKey === 'custom';
       const payload = {
         ...form,
         kind: category,
-        name: (form.name || form.chat_model || form.embed_model || '未命名').trim(),
+        name: isCustomVendor ? '自定义' : (form.name || form.chat_model || form.embed_model || '未命名').trim(),
         context_window: form.context_window * 1000,
       };
       if (editingId) {
@@ -306,7 +308,7 @@ export function ProviderSettings() {
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">{p.name}</span>
+                    <span className="truncate text-sm font-medium text-foreground">{VENDORS.find((v) => v.base_url === p.base_url)?.label ?? '自定义'}</span>
                     <KindBadge kind={p.kind} />
                     {p.vision && (
                       <span

@@ -472,7 +472,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
               }
             }}
             placeholder={
-              chatProviders.length === 0 ? '请先在设置中配置对话模型…' : '输入消息，Enter 发送…'
+              chatProviders.length === 0 ? '请先在设置中配置对话模型…' : '/召唤技能，@锁定文件，输入消息，Enter 发送…'
             }
           />
           {sessionId && (

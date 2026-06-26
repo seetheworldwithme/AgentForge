@@ -4,13 +4,15 @@ import { Icon, type IconName } from './Icon';
 import { MCPSettings } from './MCPSettings';
 import { SkillsSettings } from './SkillsSettings';
 import { MemoryPanel } from './MemoryPanel';
+import { RulesPanel } from './RulesPanel';
 
-type TabKey = 'model' | 'mcp' | 'skills' | 'memory';
+type TabKey = 'model' | 'mcp' | 'skills' | 'rules' | 'memory';
 
 const TABS: { key: TabKey; label: string; desc: string; icon: IconName }[] = [
   { key: 'model', label: '模型', desc: '配置大语言模型供应商', icon: 'settings' },
   { key: 'mcp', label: 'MCP', desc: 'Model Context Protocol 服务器', icon: 'terminal' },
   { key: 'skills', label: 'Skills', desc: '技能管理', icon: 'sparkles' },
+  { key: 'rules', label: '规则', desc: '项目规则与兼容导入', icon: 'book-open' },
   { key: 'memory', label: '记忆', desc: '跨会话的事实记忆', icon: 'brain' },
 ];
 
@@ -86,6 +88,7 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
             {tab === 'model' && <ProviderSettings />}
             {tab === 'mcp' && <MCPSettings />}
             {tab === 'skills' && <SkillsSettings />}
+            {tab === 'rules' && <RulesPanel />}
             {tab === 'memory' && <MemoryPanel />}
           </div>
         </div>

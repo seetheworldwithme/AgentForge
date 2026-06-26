@@ -164,4 +164,15 @@ export const api = {
   saveMemory: (name: string, body: { description: string; type: string; body: string }) =>
     jput<{ name: string }>(`/api/memory/${encodeURIComponent(name)}`, body),
   deleteMemory: (name: string) => jdel(`/api/memory/${encodeURIComponent(name)}`),
+
+  // --- rules（项目规则 AGENTFORGE.md + 兼容导入开关） ---
+  getRulesContent: (scope: 'global' | 'project') =>
+    jget<{ body: string; exists: boolean }>(`/api/rules/content?scope=${scope}`),
+  saveRulesContent: (scope: 'global' | 'project', body: string) =>
+    jput(`/api/rules/content`, { scope, body }),
+  clearRulesContent: (scope: 'global' | 'project') =>
+    jdel(`/api/rules/content?scope=${scope}`),
+  getRulesImports: () => jget<{ claude: boolean; agents: boolean }>('/api/rules/imports'),
+  setRulesImports: (v: { claude: boolean; agents: boolean }) =>
+    jput<{ claude: boolean; agents: boolean }>('/api/rules/imports', v),
 };

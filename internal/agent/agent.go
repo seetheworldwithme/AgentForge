@@ -158,6 +158,14 @@ func (a *Agent) Run(ctx context.Context, in RunInput) {
 		}
 	}
 
+	// 注入项目规则：全局+项目 AGENTFORGE.md（始终）+ 兼容导入 CLAUDE.md/AGENTS.md（开关）。
+	// 放在 memory 之后、base 之前 prepend，使其在最终 system 内容中位于 base 与 memory 之间。
+	if a.deps.Rules != nil {
+		if ctx := a.deps.Rules.RulesContext(); strings.TrimSpace(ctx) != "" {
+			history = prependSystemContext(history, ctx)
+		}
+	}
+
 	// 注入 base 系统提示词：建立工具路由策略，让模型在遇到图像理解、
 	// 联网搜索等超出自身能力的请求时主动调用 mcp__ 工具，而非用 bash 绕过。
 	// 在 skills 之后 prepend，使其排在最终 system 内容最前（最高优先级）。

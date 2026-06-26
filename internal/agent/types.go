@@ -32,6 +32,13 @@ type MemoryProvider interface {
 	IndexContext() string
 }
 
+// RulesProvider 是 agent 注入项目规则所需的最小接口。
+// 实现者（internal/rules.RulesStore）返回全局+项目 AGENTFORGE.md 及兼容导入的规则拼接
+// 文本；无生效规则返回空串。开关（CLAUDE.md/AGENTS.md 导入）由实现者内部读取 settings。
+type RulesProvider interface {
+	RulesContext() string
+}
+
 type RetrievedChunk struct {
 	ID         string
 	Text       string
@@ -47,6 +54,7 @@ type Deps struct {
 	RAG    RAGRetriever  // may be nil when RAG is off
 	Skills SkillProvider // may be nil when skills are off
 	Memory MemoryProvider // may be nil when memory is off
+	Rules  RulesProvider  // may be nil when rules are off
 	// MaxIter is the tool-iteration checkpoint interval: every MaxIter tool
 	// iterations the loop logs and emits a status checkpoint. It is NOT a hard
 	// cap — a task keeps running until it produces a final text answer, hits
