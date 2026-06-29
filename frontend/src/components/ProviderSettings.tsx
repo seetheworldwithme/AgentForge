@@ -137,7 +137,7 @@ const EMPTY = {
 };
 
 type Form = typeof EMPTY;
-type ModelCategory = 'chat' | 'embed';
+type ModelCategory = 'chat' | 'embed' | 'rerank';
 
 export function ProviderSettings() {
   const providers = useConfigStore((s) => s.providers);
@@ -198,7 +198,7 @@ export function ProviderSettings() {
     // 尝试匹配已有厂商
     const matched = VENDORS.find((v) => v.base_url === p.base_url);
     setVendorKey(matched ? matched.key : 'custom');
-    setCategory(p.kind === 'embed' ? 'embed' : 'chat');
+    setCategory(p.kind === 'embed' ? 'embed' : p.kind === 'rerank' ? 'rerank' : 'chat');
     setModalOpen(true);
   };
 
@@ -226,7 +226,7 @@ export function ProviderSettings() {
 
   const save = async () => {
     if (status.kind === 'testing') return;
-    if (category === 'chat' && !form.chat_model.trim()) {
+    if ((category === 'chat' || category === 'rerank') && !form.chat_model.trim()) {
       setStatus({ kind: 'error', message: '请填写模型名称' });
       return;
     }
@@ -431,6 +431,18 @@ export function ProviderSettings() {
                   >
                     Embed（向量）
                   </button>
+                  <button
+                    type="button"
+                    className={
+                      'flex-1 rounded-md border py-1.5 text-sm transition-colors ' +
+                      (category === 'rerank'
+                        ? 'border-primary/40 bg-primary/10 font-medium text-primary'
+                        : 'border-border text-muted-foreground hover:bg-muted')
+                    }
+                    onClick={() => setCategory('rerank')}
+                  >
+                    Rerank（重排）
+                  </button>
                 </div>
               </div>
 
@@ -465,10 +477,10 @@ export function ProviderSettings() {
                 <FieldRow label="模型名称">
                   <input
                     className="field flex-1"
-                    value={category === 'chat' ? form.chat_model : form.embed_model}
+                    value={category === 'embed' ? form.embed_model : form.chat_model}
                     onChange={(e) =>
                       setField(
-                        category === 'chat' ? 'chat_model' : 'embed_model',
+                        category === 'embed' ? 'embed_model' : 'chat_model',
                         e.target.value,
                       )
                     }
@@ -559,10 +571,13 @@ export function ProviderSettings() {
   );
 }
 
-// provider 类别徽章：一眼区分对话模型 / 向量模型，便于管理；无 kind 视为对话
-function KindBadge({ kind }: { kind?: 'chat' | 'embed' }) {
+// provider 类别徽章：一眼区分对话 / 向量 / 重排模型，便于管理；无 kind 视为对话
+function KindBadge({ kind }: { kind?: 'chat' | 'embed' | 'rerank' }) {
   if (kind === 'embed') {
     return <span className="status-pill bg-accent text-accent-foreground">向量</span>;
+  }
+  if (kind === 'rerank') {
+    return <span className="status-pill bg-primary/15 text-primary">重排</span>;
   }
   return <span className="status-pill bg-muted text-muted-foreground">对话</span>;
 }

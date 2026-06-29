@@ -16,7 +16,7 @@
 
 ### 知识与记忆
 
-- **RAG 知识库**：文档入库（PDF / DOCX / XLSX 等）、分块、向量检索（sqlite-vec vec0），对话时按 cosine 相似度阈值注入，低质量片段自动过滤。
+- **RAG 知识库**：文档入库（PDF / DOCX / XLSX 等）、分层语义切分（代码块/表格保护、中文 rune 安全）、**混合检索**（sqlite-vec 向量 + FTS5 trigram 全文，RRF 融合）、可选 **rerank 重排**（Jina/Cohere 兼容），对话时按相似度阈值注入，低质量片段自动过滤。
 - **Skills 技能系统**：全局 + 工作目录两层技能，精简索引常驻注入，模型按需 `read_skill` 加载全文，降低常驻 token 开销。
 - **项目规则**：`AGENTFORGE.md`（全局 `~/.agentforge/` + 项目根）两层规则自动注入；支持兼容导入 `CLAUDE.md` / `AGENTS.md`（可开关）。
 - **跨会话记忆**：Agent 自主记录「值得长期记住的事实」，以 markdown（frontmatter + 正文）存储，每轮对话注入记忆索引，可在设置页管理。四种类型：用户偏好 / 工作指导 / 项目约束 / 外部资源。
@@ -40,7 +40,7 @@
 | 后端 | Go 1.26、Wails v2、chi v5、mattn/go-sqlite3（CGO + vec0） |
 | 前端 | React 18、TypeScript、Vite、zustand、Tailwind CSS |
 | 通信 | 前端 ↔ 后端：in-process HTTP + SSE（不使用 Wails Bindings 传业务数据） |
-| 向量 | sqlite-vec vec0 loadable extension（CGO 动态加载） |
+| 向量 / 全文 | sqlite-vec vec0（向量，CGO 动态加载）+ FTS5 trigram（全文检索） |
 | 文档解析 | ledongthuc/pdf（PDF）、excelize（XLSX）、pdfcpu（PDF 处理） |
 
 ## 项目结构
@@ -53,12 +53,12 @@ internal/
   llm/                   # OpenAI 兼容客户端（chat / embed / 流式 / 重试）
   memory/                # 跨会话记忆：markdown 文件 + frontmatter + 索引 + 读写工具
   mcp/                   # MCP 服务器管理（stdio 客户端 + 工具挂载）
-  rag/                   # 知识库向量检索（分块、嵌入、cosine 召回、相似度过滤）
+  rag/                   # 知识库检索（分层切分、嵌入、向量+FTS5 双路 RRF 融合、可选 rerank）
     parser/              # 文档解析器（PDF / DOCX / XLSX → 纯文本）
   rules/                 # 项目规则（AGENTFORGE.md 全局+项目，兼容 CLAUDE.md/AGENTS.md）
   server/                # chi HTTP API + SSE 处理器
   skills/                # 技能系统（全局 + 工作目录，索引注入 + 按需加载）
-  store/                 # SQLite 数据层（schema + vec0 向量表 + 增量迁移）
+  store/                 # SQLite 数据层（schema + vec0 向量表 + FTS5 全文表 + 增量迁移）
   todo/                  # 会话内待办任务（状态机 + 任务依赖 + SSE 进度推送）
   tools/                 # 内置工具引擎 + 确认门控（Gate）+ 结构化提问（Asker）
     builtin/             # bash / file_read / file_write / file_edit / grep / read_skill
@@ -99,11 +99,11 @@ make run
 |---|---|
 | `make dev` | Wails 桌面开发模式（前端 HMR + Go 热重载） |
 | `make run` | 运行 core 服务（cmd/core） |
-| `make build` | 编译全部 Go 包（带 `sqlite_load_extension` tag） |
+| `make build` | 编译全部 Go 包（带 `sqlite_load_extension fts5` tag） |
 | `make test` | 运行全部 Go 测试 |
 | `make tidy` | `go mod tidy` |
 
-> 所有构建 / 测试都带 `-tags sqlite_load_extension`——vec0 向量扩展必需，不加会在运行时报 `no such module: vec0`（见 Makefile）。
+> 所有构建 / 测试都带 `-tags "sqlite_load_extension fts5"`——vec0 向量扩展与 FTS5 全文检索必需，不加会在运行时报 `no such module: vec0` / `no such module: fts5`（见 Makefile）。
 
 ## 架构设计
 

@@ -38,7 +38,7 @@ CC=x86_64-w64-mingw32-gcc \
 CXX=x86_64-w64-mingw32-g++ \
 wails build \
   -platform windows/amd64 \
-  -tags "sqlite_load_extension" \
+  -tags "sqlite_load_extension fts5" \
   -clean \
   -trimpath \
   -s

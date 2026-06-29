@@ -38,7 +38,7 @@ CC=aarch64-linux-gnu-gcc \
 CXX=aarch64-linux-gnu-g++ \
 wails build \
   -platform linux/arm64 \
-  -tags "sqlite_load_extension" \
+  -tags "sqlite_load_extension fts5" \
   -clean \
   -trimpath \
   -s

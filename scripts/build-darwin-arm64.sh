@@ -35,7 +35,7 @@ echo ""
 echo "[3/5] Wails 构建 (darwin/arm64)..."
 wails build \
   -platform darwin/arm64 \
-  -tags "sqlite_load_extension" \
+  -tags "sqlite_load_extension fts5" \
   -clean \
   -trimpath
 echo "  ✅ Go 构建完成"

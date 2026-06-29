@@ -34,6 +34,7 @@ export function KnowledgeWorkbench() {
   const [description, setDescription] = useState('');
   const [providerId, setProviderId] = useState('');
   const [chatProviderId, setChatProviderId] = useState('');
+  const [rerankProviderId, setRerankProviderId] = useState('');
   const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE);
   const [overlap, setOverlap] = useState(DEFAULT_OVERLAP);
   const [search, setSearch] = useState('');
@@ -68,6 +69,7 @@ export function KnowledgeWorkbench() {
     setDescription(active.description ?? '');
     setProviderId(active.embed_provider_id ?? '');
     setChatProviderId(active.chat_provider_id ?? '');
+    setRerankProviderId(active.rerank_provider_id ?? '');
     setChunkSize(active.chunk_size || DEFAULT_CHUNK_SIZE);
     setOverlap(active.chunk_overlap || DEFAULT_OVERLAP);
   }, [active?.id]);
@@ -80,9 +82,10 @@ export function KnowledgeWorkbench() {
     );
   }, [kbs, search]);
 
-  // 按类别拆分 provider：embed 下拉只列向量模型，chat/VL 下拉只列对话模型；无 kind 视为 chat
+  // 按类别拆分 provider：embed 下拉只列向量模型，chat/VL 下拉只列对话模型，rerank 下拉只列重排模型；无 kind 视为 chat
   const embedProviders = providers.filter((p) => p.kind === 'embed');
-  const chatProviders = providers.filter((p) => (p.kind ?? 'chat') !== 'embed');
+  const chatProviders = providers.filter((p) => (p.kind ?? 'chat') === 'chat');
+  const rerankProviders = providers.filter((p) => p.kind === 'rerank');
 
   const dirty =
     !!active &&
@@ -90,6 +93,7 @@ export function KnowledgeWorkbench() {
       description !== (active.description ?? '') ||
       providerId !== (active.embed_provider_id ?? '') ||
       chatProviderId !== (active.chat_provider_id ?? '') ||
+      rerankProviderId !== (active.rerank_provider_id ?? '') ||
       chunkSize !== (active.chunk_size || DEFAULT_CHUNK_SIZE) ||
       overlap !== (active.chunk_overlap || DEFAULT_OVERLAP));
 
@@ -111,6 +115,7 @@ export function KnowledgeWorkbench() {
       description,
       embed_provider_id: providerId,
       chat_provider_id: chatProviderId,
+      rerank_provider_id: rerankProviderId,
       chunk_size: chunkSize,
       chunk_overlap: overlap,
     });
@@ -369,6 +374,26 @@ export function KnowledgeWorkbench() {
                     </select>
                     <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
                       用于图片描述等多模态任务
+                    </span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Rerank 模型
+                    </span>
+                    <select
+                      className="field"
+                      value={rerankProviderId}
+                      onChange={(e) => setRerankProviderId(e.target.value)}
+                    >
+                      <option value="">未选择（可选）</option>
+                      {rerankProviders.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name} · {p.chat_model || '未配置'}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
+                      可选：对召回结果重排序，未选则走纯 RRF 融合
                     </span>
                   </label>
                   <div className="grid grid-cols-2 gap-2.5">

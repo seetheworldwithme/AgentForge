@@ -9,7 +9,7 @@ type Provider struct {
 	APIKey        string
 	ChatModel     string
 	EmbedModel    string
-	Kind          string // 'chat' | 'embed'；空串视为 chat（向后兼容）
+	Kind          string // 'chat' | 'embed' | 'rerank'；空串视为 chat（向后兼容）
 	Vision        bool   // 视觉(VL)模型：允许粘贴图片
 	ContextWindow int    // 上下文窗口大小 tokens，0=未知用全局默认
 	IsDefault     bool
@@ -50,24 +50,31 @@ func (d *DB) ListProviders() ([]Provider, error) {
 	return out, rows.Err()
 }
 
-// normalizeKind 把 kind 归一为 "chat" 或 "embed"。空串（以及存储后的
+// normalizeKind 把 kind 归一为 "chat"、"embed" 或 "rerank"。空串（以及存储后的
 // NULL）视为 chat，向后兼容 kind 列出现之前的老数据。
 func normalizeKind(kind string) string {
-	if kind == "embed" {
+	switch kind {
+	case "embed":
 		return "embed"
+	case "rerank":
+		return "rerank"
+	default:
+		return "chat"
 	}
-	return "chat"
 }
 
 // GetDefaultProviderByKind 返回指定类别中标记为默认（is_default=1）的
-// provider。chat 匹配 kind 为 NULL/”/'chat' 的行；embed 匹配 kind='embed'。
-// 没有默认时返回 sql.ErrNoRows。
+// provider。chat 匹配 kind 为 NULL/”/'chat' 的行；embed 匹配 kind='embed'；
+// rerank 匹配 kind='rerank'。没有默认时返回 sql.ErrNoRows。
 func (d *DB) GetDefaultProviderByKind(kind string) (Provider, error) {
 	q := `SELECT id,name,base_url,api_key,chat_model,embed_model,kind,vision,context_window,is_default,created_at,updated_at
 		FROM providers WHERE is_default=1 `
-	if normalizeKind(kind) == "embed" {
+	switch normalizeKind(kind) {
+	case "embed":
 		q += `AND kind='embed' `
-	} else {
+	case "rerank":
+		q += `AND kind='rerank' `
+	default:
 		q += `AND (kind IS NULL OR kind='' OR kind='chat') `
 	}
 	q += `LIMIT 1`
@@ -79,9 +86,12 @@ func (d *DB) GetDefaultProviderByKind(kind string) (Provider, error) {
 // 默认后每个类别至多保留一个默认模型。
 func (d *DB) ClearDefaultByKind(kind string) error {
 	var q string
-	if normalizeKind(kind) == "embed" {
+	switch normalizeKind(kind) {
+	case "embed":
 		q = `UPDATE providers SET is_default=0 WHERE kind='embed'`
-	} else {
+	case "rerank":
+		q = `UPDATE providers SET is_default=0 WHERE kind='rerank'`
+	default:
 		q = `UPDATE providers SET is_default=0 WHERE kind IS NULL OR kind='' OR kind='chat'`
 	}
 	_, err := d.sql.Exec(q)
@@ -105,6 +115,9 @@ func (d *DB) DeleteProvider(id string) error {
 		return err
 	}
 	if _, err := tx.Exec(`UPDATE knowledge_bases SET chat_provider_id=NULL WHERE chat_provider_id=?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE knowledge_bases SET rerank_provider_id=NULL WHERE rerank_provider_id=?`, id); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM providers WHERE id=?`, id); err != nil {

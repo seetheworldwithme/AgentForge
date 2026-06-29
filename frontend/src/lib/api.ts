@@ -81,7 +81,7 @@ export const api = {
     api_key: string;
     chat_model?: string;
     embed_model?: string;
-    kind: 'chat' | 'embed';
+    kind: 'chat' | 'embed' | 'rerank';
   }) => jpost<{ ok: boolean; error?: string }>('/api/providers/test', p),
 
   // --- sessions ---

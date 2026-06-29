@@ -62,9 +62,9 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
     if (!loaded) load();
   }, [loaded, load]);
 
-  // 对话下拉框只展示 chat 类模型（排除 embed 向量模型）；老数据无 kind 视为 chat
+  // 对话下拉框只展示 chat 类模型（排除 embed/rerank）；老数据无 kind 视为 chat
   const chatProviders = useMemo(
-    () => providers.filter((p) => (p.kind ?? 'chat') !== 'embed'),
+    () => providers.filter((p) => (p.kind ?? 'chat') === 'chat'),
     [providers],
   );
 

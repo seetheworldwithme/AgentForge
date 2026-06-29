@@ -46,15 +46,16 @@ func (h *KBHandler) Routes(r chi.Router) {
 }
 
 type kbDTO struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	EmbedProvider string `json:"embed_provider_id"`
-	ChatProvider  string `json:"chat_provider_id"`
-	ChunkSize     int    `json:"chunk_size"`
-	ChunkOverlap  int    `json:"chunk_overlap"`
-	DocCount      int    `json:"doc_count"`
-	CreatedAt     string `json:"created_at"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Description    string `json:"description"`
+	EmbedProvider  string `json:"embed_provider_id"`
+	ChatProvider   string `json:"chat_provider_id"`
+	RerankProvider string `json:"rerank_provider_id"`
+	ChunkSize      int    `json:"chunk_size"`
+	ChunkOverlap   int    `json:"chunk_overlap"`
+	DocCount       int    `json:"doc_count"`
+	CreatedAt      string `json:"created_at"`
 }
 
 type documentDTO struct {
@@ -100,6 +101,7 @@ func (h *KBHandler) list(w http.ResponseWriter, r *http.Request) {
 		out[i] = kbDTO{
 			ID: k.ID, Name: k.Name, Description: k.Description,
 			EmbedProvider: k.EmbedProviderID, ChatProvider: k.ChatProviderID,
+			RerankProvider: k.RerankProviderID,
 			ChunkSize: k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
 			DocCount: k.DocCount, CreatedAt: k.CreatedAt,
 		}
@@ -117,6 +119,7 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 	kb := store.KnowledgeBase{
 		ID: "kb_" + ulid.Make().String(), Name: dto.Name, Description: dto.Description,
 		EmbedProviderID: dto.EmbedProvider, ChatProviderID: dto.ChatProvider,
+		RerankProviderID: dto.RerankProvider,
 		ChunkSize: dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
 		CreatedAt: now,
 	}
@@ -127,6 +130,7 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, kbDTO{
 		ID: kb.ID, Name: kb.Name, Description: kb.Description,
 		EmbedProvider: kb.EmbedProviderID, ChatProvider: kb.ChatProviderID,
+		RerankProvider: kb.RerankProviderID,
 		ChunkSize: kb.ChunkSize, ChunkOverlap: kb.ChunkOverlap,
 		DocCount: kb.DocCount, CreatedAt: kb.CreatedAt,
 	})
@@ -152,6 +156,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 	current.Description = dto.Description
 	current.EmbedProviderID = dto.EmbedProvider
 	current.ChatProviderID = dto.ChatProvider
+	current.RerankProviderID = dto.RerankProvider
 	current.ChunkSize = dto.ChunkSize
 	current.ChunkOverlap = dto.ChunkOverlap
 	if err := h.DB.UpdateKB(current); err != nil {
@@ -162,6 +167,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, kbDTO{
 		ID: updated.ID, Name: updated.Name, Description: updated.Description,
 		EmbedProvider: updated.EmbedProviderID, ChatProvider: updated.ChatProviderID,
+		RerankProvider: updated.RerankProviderID,
 		ChunkSize: updated.ChunkSize, ChunkOverlap: updated.ChunkOverlap,
 		DocCount: updated.DocCount, CreatedAt: updated.CreatedAt,
 	})
@@ -170,6 +176,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 func (h *KBHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	_ = h.DB.DropVecTable(store.SanitizeTableName(id))
+	_ = h.DB.DropFTSTable(store.FTSTableName(id))
 	if err := h.DB.DeleteKB(id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -439,6 +446,7 @@ func (h *KBHandler) clearDocIndex(kbID, docID string) error {
 		ids[i] = c.ID
 	}
 	_ = h.DB.DeleteVectorsByChunkIDs(store.SanitizeTableName(kbID), ids)
+	_ = h.DB.DeleteFTSByChunkIDs(store.FTSTableName(kbID), ids)
 	return h.DB.DeleteChunksByDoc(docID)
 }
 
@@ -455,7 +463,7 @@ func (h *KBHandler) search(ctx context.Context, kbID, query string, topK int) ([
 		for i, h := range hits {
 			out[i] = retrieveHitDTO{
 				ChunkID: h.ChunkID, DocumentID: h.DocumentID, Filename: h.Filename,
-				Ordinal: h.Ordinal, Text: h.Text, Similarity: rag.CosineSimilarity(h.Distance),
+				Ordinal: h.Ordinal, Text: h.Text, Similarity: h.Score,
 			}
 		}
 		return out, nil

@@ -44,6 +44,11 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 	chunks := Chunk(text, ing.chunkSize(), ing.overlap())
 	log.Printf("ingest: doc=%s parsed %d chars -> %d chunks", docID, len(text), len(chunks))
 
+	// FTS5 表不依赖 embedding 维度，先建好（trigram 全文索引）。
+	if err := ing.DB.EnsureFTSTable(ftsTable(ing.KBID)); err != nil {
+		ing.fail(docID, "fts-table", 0, err)
+		return err
+	}
 	// Ensure the vec0 table exists lazily, once we know the embedding dim.
 	dim := 0
 	const batch = 64
@@ -82,6 +87,10 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 				ing.fail(docID, "store", idx, err)
 				return err
 			}
+			if err := ing.DB.InsertFTS(ftsTable(ing.KBID), chunkID, chunks[idx]); err != nil {
+				ing.fail(docID, "fts-store", idx, err)
+				return err
+			}
 		}
 		log.Printf("ingest: doc=%s embedded %d/%d chunks", docID, end, len(chunks))
 	}
@@ -112,6 +121,7 @@ func (ing *Ingestor) overlap() int {
 }
 
 func vecTable(kbID string) string { return store.SanitizeTableName(kbID) }
+func ftsTable(kbID string) string { return store.FTSTableName(kbID) }
 
 // 单文档最多描述这么多张图片，超出跳过（避免大文档把 VLM 打爆）。
 const maxImagesPerDoc = 20

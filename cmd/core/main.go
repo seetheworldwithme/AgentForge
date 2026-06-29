@@ -56,7 +56,14 @@ func main() {
 		embedClient = llm.NewOpenAIClient(llm.Config{
 			BaseURL: def.BaseURL, APIKey: def.APIKey, Model: def.EmbedModel,
 		})
-		ragRetriever = &rag.Retriever{DB: db, EmbedClient: embedClient}
+		// 默认 rerank provider（可选）：未配置时 RerankClient 为 nil，检索走纯 RRF。
+		var rerankClient llm.RerankClient
+		if rdef, err := db.GetDefaultProviderByKind("rerank"); err == nil && rdef.ChatModel != "" {
+			rerankClient = llm.NewRerankClient(llm.Config{
+				BaseURL: rdef.BaseURL, APIKey: rdef.APIKey, Model: rdef.ChatModel,
+			})
+		}
+		ragRetriever = &rag.Retriever{DB: db, EmbedClient: embedClient, RerankClient: rerankClient}
 	}
 
 	router := server.NewRouter(server.Deps{

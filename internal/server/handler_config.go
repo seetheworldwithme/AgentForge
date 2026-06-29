@@ -153,6 +153,8 @@ func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
 	switch kind {
 	case "embed":
 		model = dto.EmbedModel
+	case "rerank":
+		model = dto.ChatModel // rerank 复用 chat_model 列存储模型名
 	default:
 		model = dto.ChatModel
 	}
@@ -175,6 +177,20 @@ func (h *ConfigHandler) testProvider(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(vecs) == 0 || len(vecs[0]) == 0 {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "empty embedding"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	if kind == "rerank" {
+		rc := llm.NewRerankClient(llm.Config{BaseURL: dto.BaseURL, APIKey: dto.APIKey, Model: model})
+		rr, err := rc.Rerank(ctx, "hi", []string{"hello", "world"}, 1)
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		if len(rr) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "empty rerank result"})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})

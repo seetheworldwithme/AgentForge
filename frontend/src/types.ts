@@ -8,7 +8,7 @@ export interface Provider {
   api_key: string;
   chat_model: string;
   embed_model?: string;
-  kind?: 'chat' | 'embed'; // 后端持久化；空/缺省视为 chat（向后兼容老数据）
+  kind?: 'chat' | 'embed' | 'rerank'; // 后端持久化；空/缺省视为 chat（向后兼容老数据）
   vision?: boolean; // 视觉(VL)模型：允许在对话框粘贴图片
   context_window?: number; // 上下文窗口大小 tokens，0=未知用全局默认
   is_default: boolean;
@@ -46,6 +46,7 @@ export interface KnowledgeBase {
   description?: string;
   embed_provider_id: string;
   chat_provider_id?: string;
+  rerank_provider_id?: string;
   chunk_size: number;
   chunk_overlap: number;
   doc_count: number;

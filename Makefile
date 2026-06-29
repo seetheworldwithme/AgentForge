@@ -1,8 +1,12 @@
-# Build tags: sqlite_load_extension is REQUIRED to enable vec0 loadable extension
-# support in mattn/go-sqlite3. Without it, vector operations fail at runtime
-# with "no such module: vec0". Always run builds/tests through these targets.
+# Build tags:
+# - sqlite_load_extension: REQUIRED to enable vec0 loadable extension support in
+#   mattn/go-sqlite3. Without it, vector ops fail at runtime with "no such
+#   module: vec0".
+# - fts5: REQUIRED to enable FTS5 (full-text search) for RAG hybrid retrieval.
+#   Without it, FTS5 table creation fails with "no such module: fts5".
+# Always run builds/tests through these targets.
 
-BUILD_TAGS = sqlite_load_extension
+BUILD_TAGS = sqlite_load_extension fts5
 
 .PHONY: build run dev test test-vet tidy
 

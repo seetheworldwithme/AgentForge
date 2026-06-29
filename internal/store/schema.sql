@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS providers (
     api_key     TEXT NOT NULL,
     chat_model  TEXT NOT NULL,
     embed_model TEXT,
-    kind        TEXT, -- 'chat' | 'embed'；NULL 视为 chat（向后兼容老数据）
+    kind        TEXT, -- 'chat' | 'embed' | 'rerank'；NULL 视为 chat（向后兼容老数据）
     vision      TEXT, -- '1' = 视觉(VL)模型，允许粘贴图片；NULL/'' = 纯文本
     context_window INTEGER DEFAULT 0, -- 上下文窗口大小 tokens，0=未知用全局默认
     is_default  INTEGER DEFAULT 0,
@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     description       TEXT,
     embed_provider_id TEXT REFERENCES providers(id),
     chat_provider_id  TEXT REFERENCES providers(id),
+    rerank_provider_id TEXT REFERENCES providers(id),
     chunk_size        INTEGER DEFAULT 800,
     chunk_overlap     INTEGER DEFAULT 100,
     doc_count         INTEGER DEFAULT 0,
