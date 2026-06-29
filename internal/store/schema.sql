@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     embed_provider_id TEXT REFERENCES providers(id),
     chat_provider_id  TEXT REFERENCES providers(id),
     rerank_provider_id TEXT REFERENCES providers(id),
+    index_mode        TEXT DEFAULT 'chunk', -- 'chunk'(父子分块) | 'qa'(问答对索引)
     chunk_size        INTEGER DEFAULT 800,
     chunk_overlap     INTEGER DEFAULT 100,
     doc_count         INTEGER DEFAULT 0,
@@ -83,7 +84,9 @@ CREATE TABLE IF NOT EXISTS chunks (
     ordinal     INTEGER NOT NULL,
     text        TEXT NOT NULL,
     token_count INTEGER,
-    metadata    TEXT
+    metadata    TEXT,
+    parent_id   TEXT,
+    kind        TEXT -- 'content'(普通子块) | 'qa'(问答对) | 'summary'(摘要)；NULL/空视为 content
 );
 CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_kb ON chunks(kb_id);
@@ -94,4 +97,13 @@ CREATE TABLE IF NOT EXISTS tool_allowlist (
     tool       TEXT NOT NULL,
     pattern    TEXT NOT NULL,
     created_at TEXT NOT NULL
+);
+
+-- embedding 缓存：按 (model, text_hash) 复用向量，避免重复文档/重建索引的重复嵌入。
+CREATE TABLE IF NOT EXISTS embedding_cache (
+    model      TEXT NOT NULL,
+    text_hash  TEXT NOT NULL,
+    embedding  TEXT NOT NULL, -- JSON 数组，与 vec0 的存储格式一致
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (model, text_hash)
 );

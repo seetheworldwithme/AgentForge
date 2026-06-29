@@ -3,9 +3,12 @@ package rag
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/agent-rust/core/internal/llm"
@@ -16,13 +19,16 @@ import (
 
 // Ingestor parses, chunks, embeds (batched), and stores a document.
 type Ingestor struct {
-	DB      *store.DB
-	Embed   llm.LLMClient
-	Vision  llm.LLMClient // 可选，用于把图片描述成文字（VLM）；nil 时图片跳过
-	KBID    string
-	ChunkSz int
-	Overlap int
-	Parser  parser.Parser // the chosen parser for the file
+	DB         *store.DB
+	Embed      llm.LLMClient
+	Vision     llm.LLMClient // 可选，用于把图片描述成文字（VLM）；nil 时图片跳过
+	Chat       llm.LLMClient // 可选，用于 QA 索引生成 + 摘要索引生成；nil 时跳过
+	KBID       string
+	EmbedModel string // embedding 模型名，用作缓存 key（不同模型维度不同）
+	IndexMode  string // chunk | qa；空视为 chunk
+	ChunkSz    int
+	Overlap    int
+	Parser     parser.Parser // the chosen parser for the file
 }
 
 // IngestFile parses, chunks, embeds (batched), and stores a document. Every
@@ -41,62 +47,157 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 	}
 	// 把图片占位符替换成 VLM 描述（按文档位置）；没配 VLM 或失败则清除。
 	text := ing.fillImagePlaceholders(ctx, docID, result)
-	chunks := Chunk(text, ing.chunkSize(), ing.overlap())
-	log.Printf("ingest: doc=%s parsed %d chars -> %d chunks", docID, len(text), len(chunks))
+	// 父子分块：先切父块（大，提供上下文）。叶子单元（向量化单元）按索引模式生成：
+	//   - chunk 模式：父块切成子块（content）
+	//   - qa 模式：父块由 chat 转成问答对（qa），用问题向量化；失败回退 content
+	//   - 额外：若配了 chat，为每个父块生成摘要叶子（summary）
+	parents := Chunk(text, ing.chunkSize()*4, ing.overlap())
+	type leafEntry struct {
+		parentIdx int
+		embText   string // 向量化文本（qa 用问题，summary 用摘要，content 用子块）
+		storeText string // 存 chunk.text（qa 存问答对，其余同 embText）
+		kind      string
+	}
+	var leaves []leafEntry
+	for pi, p := range parents {
+		if ing.IndexMode == "qa" && ing.Chat != nil {
+			if qas := ing.generateQA(ctx, docID, p); len(qas) > 0 {
+				for _, qa := range qas {
+					leaves = append(leaves, leafEntry{parentIdx: pi, embText: qa.q,
+						storeText: "问：" + qa.q + "\n答：" + qa.a, kind: "qa"})
+				}
+			} else {
+				// QA 生成失败，回退为 content 子块
+				for _, ch := range Chunk(p, ing.chunkSize(), ing.overlap()) {
+					leaves = append(leaves, leafEntry{parentIdx: pi, embText: ch, storeText: ch, kind: "content"})
+				}
+			}
+		} else {
+			for _, ch := range Chunk(p, ing.chunkSize(), ing.overlap()) {
+				leaves = append(leaves, leafEntry{parentIdx: pi, embText: ch, storeText: ch, kind: "content"})
+			}
+		}
+		if ing.Chat != nil {
+			if summary := ing.generateSummary(ctx, docID, p); summary != "" {
+				leaves = append(leaves, leafEntry{parentIdx: pi, embText: summary, storeText: summary, kind: "summary"})
+			}
+		}
+	}
+	log.Printf("ingest: doc=%s parsed %d chars -> %d parents, %d leaves", docID, len(text), len(parents), len(leaves))
 
 	// FTS5 表不依赖 embedding 维度，先建好（trigram 全文索引）。
 	if err := ing.DB.EnsureFTSTable(ftsTable(ing.KBID)); err != nil {
 		ing.fail(docID, "fts-table", 0, err)
 		return err
 	}
-	// Ensure the vec0 table exists lazily, once we know the embedding dim.
-	dim := 0
-	const batch = 64
-	for i := 0; i < len(chunks); i += batch {
-		end := i + batch
-		if end > len(chunks) {
-			end = len(chunks)
-		}
-		vecs, err := ing.Embed.Embed(ctx, chunks[i:end])
-		if err != nil {
-			ing.fail(docID, "embed", i, err)
+
+	// 写父块（仅存文本，不向量化/FTS，供检索时 join 返回上下文）。
+	parentIDs := make([]string, len(parents))
+	for pi, p := range parents {
+		parentIDs[pi] = "chunk_" + ulid.Make().String()
+		if err := ing.DB.CreateChunk(store.Chunk{
+			ID: parentIDs[pi], DocID: docID, KBID: ing.KBID, Ordinal: pi, Text: p,
+		}); err != nil {
+			ing.fail(docID, "store", pi, err)
 			return err
 		}
-		if len(vecs) != end-i {
-			err := fmt.Errorf("embed returned %d vectors for %d chunks", len(vecs), end-i)
-			ing.fail(docID, "embed", i, err)
-			return err
-		}
-		for j, vec := range vecs {
-			idx := i + j
-			chunkID := "chunk_" + ulid.Make().String()
-			if err := ing.DB.CreateChunk(store.Chunk{
-				ID: chunkID, DocID: docID, KBID: ing.KBID, Ordinal: idx, Text: chunks[idx],
-			}); err != nil {
-				ing.fail(docID, "store", idx, err)
-				return err
-			}
-			if dim == 0 {
-				dim = len(vec)
-				if err := ing.DB.EnsureVecTable(vecTable(ing.KBID), dim); err != nil {
-					ing.fail(docID, "vec-table", idx, err)
-					return err
-				}
-			}
-			if err := ing.DB.InsertVector(vecTable(ing.KBID), chunkID, vec); err != nil {
-				ing.fail(docID, "store", idx, err)
-				return err
-			}
-			if err := ing.DB.InsertFTS(ftsTable(ing.KBID), chunkID, chunks[idx]); err != nil {
-				ing.fail(docID, "fts-store", idx, err)
-				return err
-			}
-		}
-		log.Printf("ingest: doc=%s embedded %d/%d chunks", docID, end, len(chunks))
 	}
 
-	_ = ing.DB.SetDocumentStatus(docID, "ready", len(chunks), "")
-	log.Printf("ingest: doc=%s ready (%d chunks)", docID, len(chunks))
+	// 叶子嵌入（走 embedding 缓存）：算 hash → 查缓存 → 未命中批量嵌入 → 回写缓存。
+	leafTexts := make([]string, len(leaves))
+	for i, l := range leaves {
+		leafTexts[i] = l.embText
+	}
+	hashes := make([]string, len(leaves))
+	for i, t := range leafTexts {
+		hashes[i] = hashText(t)
+	}
+	model := ing.EmbedModel
+	vecByHash := make(map[string][]float32, len(leaves))
+	if cached, err := ing.DB.GetCachedEmbeddings(model, hashes); err == nil {
+		for h, v := range cached {
+			vecByHash[h] = v
+		}
+	} else {
+		log.Printf("ingest: doc=%s embedding cache read failed (proceeding without cache): %v", docID, err)
+	}
+	var missIdx []int
+	for i, h := range hashes {
+		if _, ok := vecByHash[h]; !ok {
+			missIdx = append(missIdx, i)
+		}
+	}
+	const batch = 64
+	for s := 0; s < len(missIdx); s += batch {
+		e := s + batch
+		if e > len(missIdx) {
+			e = len(missIdx)
+		}
+		batchIdx := missIdx[s:e]
+		texts := make([]string, len(batchIdx))
+		for k, idx := range batchIdx {
+			texts[k] = leafTexts[idx]
+		}
+		vecs, err := ing.Embed.Embed(ctx, texts)
+		if err != nil {
+			ing.fail(docID, "embed", s, err)
+			return err
+		}
+		if len(vecs) != len(batchIdx) {
+			err := fmt.Errorf("embed returned %d vectors for %d chunks", len(vecs), len(batchIdx))
+			ing.fail(docID, "embed", s, err)
+			return err
+		}
+		for k, vec := range vecs {
+			idx := batchIdx[k]
+			vecByHash[hashes[idx]] = vec
+			if err := ing.DB.PutCachedEmbedding(model, hashes[idx], vec); err != nil {
+				log.Printf("ingest: doc=%s embedding cache write failed: %v", docID, err)
+			}
+		}
+		log.Printf("ingest: doc=%s embedded %d/%d leaves (cache miss)", docID, e, len(missIdx))
+	}
+
+	// 确定向量维度（首个非空向量），建 vec0 表。
+	dim := 0
+	for _, v := range vecByHash {
+		if len(v) > 0 {
+			dim = len(v)
+			break
+		}
+	}
+	if dim == 0 {
+		err := fmt.Errorf("no embeddings produced for %d leaves", len(leaves))
+		ing.fail(docID, "embed", 0, err)
+		return err
+	}
+	if err := ing.DB.EnsureVecTable(vecTable(ing.KBID), dim); err != nil {
+		ing.fail(docID, "vec-table", 0, err)
+		return err
+	}
+
+	// 写叶子：文本(storeText) + 向量 + FTS(embText) + parent_id + kind。
+	for i, l := range leaves {
+		chunkID := "chunk_" + ulid.Make().String()
+		if err := ing.DB.CreateChunk(store.Chunk{
+			ID: chunkID, DocID: docID, KBID: ing.KBID, Ordinal: len(parents) + i, Text: l.storeText,
+			ParentID: parentIDs[l.parentIdx], Kind: l.kind,
+		}); err != nil {
+			ing.fail(docID, "store", i, err)
+			return err
+		}
+		if err := ing.DB.InsertVector(vecTable(ing.KBID), chunkID, vecByHash[hashes[i]]); err != nil {
+			ing.fail(docID, "store", i, err)
+			return err
+		}
+		if err := ing.DB.InsertFTS(ftsTable(ing.KBID), chunkID, l.embText); err != nil {
+			ing.fail(docID, "fts-store", i, err)
+			return err
+		}
+	}
+
+	_ = ing.DB.SetDocumentStatus(docID, "ready", len(leaves), "")
+	log.Printf("ingest: doc=%s ready (%d parents, %d leaves)", docID, len(parents), len(leaves))
 	return nil
 }
 
@@ -122,6 +223,12 @@ func (ing *Ingestor) overlap() int {
 
 func vecTable(kbID string) string { return store.SanitizeTableName(kbID) }
 func ftsTable(kbID string) string { return store.FTSTableName(kbID) }
+
+// hashText 返回文本的 SHA-256 十六进制摘要，用作 embedding 缓存的 text_hash key。
+func hashText(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
 
 // 单文档最多描述这么多张图片，超出跳过（避免大文档把 VLM 打爆）。
 const maxImagesPerDoc = 20
@@ -185,4 +292,48 @@ func (ing *Ingestor) describeOneImage(ctx context.Context, img parser.ParsedImag
 		Content: prompt,
 		Images:  []llm.ImageRef{{DataURL: dataURL}},
 	}})
+}
+
+// qaPair 是 QA 索引模式生成的一个问答对。
+type qaPair struct{ q, a string }
+
+// generateQA 让 chat 模型把一段文本转成问答对（QA 索引模式）。问题像用户会问的自然
+// 问题，答案基于原文。失败返回 nil（调用方回退为 content 子块）。
+func (ing *Ingestor) generateQA(ctx context.Context, docID, text string) []qaPair {
+	if ing.Chat == nil {
+		return nil
+	}
+	prompt := "请把下面这段文本转成问答对，用于知识库检索。每行一个，格式：问题|答案（用竖线分隔）。" +
+		"问题要像用户会自然提问的样子，答案基于原文、简洁准确。最多 5 个，不要输出任何其他内容。\n文本：" + text
+	resp, err := ing.Chat.Chat(ctx, []llm.Message{{Role: llm.RoleUser, Content: prompt}})
+	if err != nil {
+		log.Printf("ingest: doc=%s QA generation failed: %v", docID, err)
+		return nil
+	}
+	var pairs []qaPair
+	for _, line := range strings.Split(resp, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			pairs = append(pairs, qaPair{q: strings.TrimSpace(parts[0]), a: strings.TrimSpace(parts[1])})
+		}
+	}
+	return pairs
+}
+
+// generateSummary 让 chat 模型为一段文本生成摘要（摘要索引）。失败返回空串。
+func (ing *Ingestor) generateSummary(ctx context.Context, docID, text string) string {
+	if ing.Chat == nil {
+		return ""
+	}
+	prompt := "请用一两句话概括下面这段文本的核心内容，用于知识库检索。只输出摘要本身，不要解释。\n文本：" + text
+	resp, err := ing.Chat.Chat(ctx, []llm.Message{{Role: llm.RoleUser, Content: prompt}})
+	if err != nil {
+		log.Printf("ingest: doc=%s summary generation failed: %v", docID, err)
+		return ""
+	}
+	return strings.TrimSpace(resp)
 }

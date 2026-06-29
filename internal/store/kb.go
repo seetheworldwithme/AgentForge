@@ -7,6 +7,7 @@ type KnowledgeBase struct {
 	EmbedProviderID  string
 	ChatProviderID   string
 	RerankProviderID string
+	IndexMode        string // chunk | qa；空视为 chunk
 	ChunkSize        int
 	ChunkOverlap     int
 	DocCount         int
@@ -35,34 +36,36 @@ type Chunk struct {
 	Text       string
 	TokenCount int
 	Metadata   string // JSON
+	ParentID   string // 父块 ID（父子分块：子块指向父块；父块/顶层为空）
+	Kind       string // content | qa | summary；空视为 content
 }
 
 func (d *DB) CreateKB(kb KnowledgeBase) error {
 	_, err := d.sql.Exec(`INSERT INTO knowledge_bases
-		(id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,chunk_size,chunk_overlap,doc_count,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		(id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,index_mode,chunk_size,chunk_overlap,doc_count,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		kb.ID, kb.Name, nullable(kb.Description), nullable(kb.EmbedProviderID),
-		nullable(kb.ChatProviderID), nullable(kb.RerankProviderID),
+		nullable(kb.ChatProviderID), nullable(kb.RerankProviderID), nullable(kb.IndexMode),
 		kb.ChunkSize, kb.ChunkOverlap, kb.DocCount, kb.CreatedAt)
 	return err
 }
 
 func (d *DB) UpdateKB(kb KnowledgeBase) error {
 	_, err := d.sql.Exec(`UPDATE knowledge_bases
-		SET name=?, description=?, embed_provider_id=?, chat_provider_id=?, rerank_provider_id=?, chunk_size=?, chunk_overlap=?
+		SET name=?, description=?, embed_provider_id=?, chat_provider_id=?, rerank_provider_id=?, index_mode=?, chunk_size=?, chunk_overlap=?
 		WHERE id=?`,
 		kb.Name, nullable(kb.Description), nullable(kb.EmbedProviderID),
-		nullable(kb.ChatProviderID), nullable(kb.RerankProviderID),
+		nullable(kb.ChatProviderID), nullable(kb.RerankProviderID), nullable(kb.IndexMode),
 		kb.ChunkSize, kb.ChunkOverlap, kb.ID)
 	return err
 }
 
 func (d *DB) GetKB(id string) (KnowledgeBase, error) {
-	row := d.sql.QueryRow(`SELECT id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,chunk_size,chunk_overlap,doc_count,created_at
+	row := d.sql.QueryRow(`SELECT id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,index_mode,chunk_size,chunk_overlap,doc_count,created_at
 		FROM knowledge_bases WHERE id=?`, id)
 	var kb KnowledgeBase
-	var desc, embedProv, chatProv, rerankProv *string
-	err := row.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &rerankProv, &kb.ChunkSize, &kb.ChunkOverlap,
+	var desc, embedProv, chatProv, rerankProv, indexMode *string
+	err := row.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &rerankProv, &indexMode, &kb.ChunkSize, &kb.ChunkOverlap,
 		&kb.DocCount, &kb.CreatedAt)
 	if desc != nil {
 		kb.Description = *desc
@@ -76,11 +79,14 @@ func (d *DB) GetKB(id string) (KnowledgeBase, error) {
 	if rerankProv != nil {
 		kb.RerankProviderID = *rerankProv
 	}
+	if indexMode != nil {
+		kb.IndexMode = *indexMode
+	}
 	return kb, err
 }
 
 func (d *DB) ListKBs() ([]KnowledgeBase, error) {
-	rows, err := d.sql.Query(`SELECT id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,chunk_size,chunk_overlap,doc_count,created_at
+	rows, err := d.sql.Query(`SELECT id,name,description,embed_provider_id,chat_provider_id,rerank_provider_id,index_mode,chunk_size,chunk_overlap,doc_count,created_at
 		FROM knowledge_bases ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -89,8 +95,8 @@ func (d *DB) ListKBs() ([]KnowledgeBase, error) {
 	var out []KnowledgeBase
 	for rows.Next() {
 		var kb KnowledgeBase
-		var desc, embedProv, chatProv, rerankProv *string
-		if err := rows.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &rerankProv, &kb.ChunkSize, &kb.ChunkOverlap,
+		var desc, embedProv, chatProv, rerankProv, indexMode *string
+		if err := rows.Scan(&kb.ID, &kb.Name, &desc, &embedProv, &chatProv, &rerankProv, &indexMode, &kb.ChunkSize, &kb.ChunkOverlap,
 			&kb.DocCount, &kb.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -105,6 +111,9 @@ func (d *DB) ListKBs() ([]KnowledgeBase, error) {
 		}
 		if rerankProv != nil {
 			kb.RerankProviderID = *rerankProv
+		}
+		if indexMode != nil {
+			kb.IndexMode = *indexMode
 		}
 		out = append(out, kb)
 	}
@@ -220,14 +229,14 @@ func scanDocument(s scanner) (Document, error) {
 
 func (d *DB) CreateChunk(c Chunk) error {
 	_, err := d.sql.Exec(`INSERT INTO chunks
-		(id,doc_id,kb_id,ordinal,text,token_count,metadata)
-		VALUES(?,?,?,?,?,?,?)`,
-		c.ID, c.DocID, c.KBID, c.Ordinal, c.Text, c.TokenCount, nullable(c.Metadata))
+		(id,doc_id,kb_id,ordinal,text,token_count,metadata,parent_id,kind)
+		VALUES(?,?,?,?,?,?,?,?,?)`,
+		c.ID, c.DocID, c.KBID, c.Ordinal, c.Text, c.TokenCount, nullable(c.Metadata), nullable(c.ParentID), nullable(c.Kind))
 	return err
 }
 
 func (d *DB) ListChunksByDoc(docID string) ([]Chunk, error) {
-	rows, err := d.sql.Query(`SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata
+	rows, err := d.sql.Query(`SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata,parent_id,kind
 		FROM chunks WHERE doc_id=? ORDER BY ordinal`, docID)
 	if err != nil {
 		return nil, err
@@ -236,13 +245,19 @@ func (d *DB) ListChunksByDoc(docID string) ([]Chunk, error) {
 	var out []Chunk
 	for rows.Next() {
 		var c Chunk
-		var meta *string
+		var meta, parentID, kind *string
 		if err := rows.Scan(&c.ID, &c.DocID, &c.KBID, &c.Ordinal, &c.Text,
-			&c.TokenCount, &meta); err != nil {
+			&c.TokenCount, &meta, &parentID, &kind); err != nil {
 			return nil, err
 		}
 		if meta != nil {
 			c.Metadata = *meta
+		}
+		if parentID != nil {
+			c.ParentID = *parentID
+		}
+		if kind != nil {
+			c.Kind = *kind
 		}
 		out = append(out, c)
 	}
@@ -253,7 +268,7 @@ func (d *DB) ListChunksByKB(kbID string, limit int) ([]Chunk, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := d.sql.Query(`SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata
+	rows, err := d.sql.Query(`SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata,parent_id,kind
 		FROM chunks WHERE kb_id=? ORDER BY doc_id, ordinal LIMIT ?`, kbID, limit)
 	if err != nil {
 		return nil, err
@@ -262,13 +277,19 @@ func (d *DB) ListChunksByKB(kbID string, limit int) ([]Chunk, error) {
 	var out []Chunk
 	for rows.Next() {
 		var c Chunk
-		var meta *string
+		var meta, parentID, kind *string
 		if err := rows.Scan(&c.ID, &c.DocID, &c.KBID, &c.Ordinal, &c.Text,
-			&c.TokenCount, &meta); err != nil {
+			&c.TokenCount, &meta, &parentID, &kind); err != nil {
 			return nil, err
 		}
 		if meta != nil {
 			c.Metadata = *meta
+		}
+		if parentID != nil {
+			c.ParentID = *parentID
+		}
+		if kind != nil {
+			c.Kind = *kind
 		}
 		out = append(out, c)
 	}
@@ -280,7 +301,7 @@ func (d *DB) GetChunksByIDs(ids []string) ([]Chunk, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	q := `SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata FROM chunks WHERE id IN (` + placeholders(len(ids)) + `)`
+	q := `SELECT id,doc_id,kb_id,ordinal,text,token_count,metadata,parent_id,kind FROM chunks WHERE id IN (` + placeholders(len(ids)) + `)`
 	args := make([]any, len(ids))
 	for i, id := range ids {
 		args[i] = id
@@ -293,13 +314,19 @@ func (d *DB) GetChunksByIDs(ids []string) ([]Chunk, error) {
 	var out []Chunk
 	for rows.Next() {
 		var c Chunk
-		var meta *string
+		var meta, parentID, kind *string
 		if err := rows.Scan(&c.ID, &c.DocID, &c.KBID, &c.Ordinal, &c.Text,
-			&c.TokenCount, &meta); err != nil {
+			&c.TokenCount, &meta, &parentID, &kind); err != nil {
 			return nil, err
 		}
 		if meta != nil {
 			c.Metadata = *meta
+		}
+		if parentID != nil {
+			c.ParentID = *parentID
+		}
+		if kind != nil {
+			c.Kind = *kind
 		}
 		out = append(out, c)
 	}

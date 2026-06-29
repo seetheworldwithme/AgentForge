@@ -24,6 +24,7 @@ type Deps struct {
 	Gate        *tools.Gate
 	Engine      *tools.Engine
 	EmbedClient llm.LLMClient      // used by KB ingest; nil disables upload
+	EmbedModel  string             // 全局默认 embedding 模型名（缓存 key）；KB 绑定的优先
 	RAG         agent.RAGRetriever // optional; nil disables chat RAG
 	Skills      *skills.Manager    // optional; nil disables skill injection
 	MCP         *mcp.Manager       // optional; nil disables MCP tools/settings
@@ -87,7 +88,7 @@ func NewRouter(d Deps) http.Handler {
 		chat.Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&AskHandler{Asker: d.Asker}).Routes(r)
-		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
+		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, EmbedModel: d.EmbedModel, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&TerminalHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&SkillsHandler{Manager: d.Skills}).Routes(r)

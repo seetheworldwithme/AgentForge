@@ -25,6 +25,9 @@ func (d *DB) EnsureVecTable(name string, dim int) error {
 // InsertVector stores one vector keyed by chunkID. vec0 accepts JSON arrays
 // for the embedding column.
 func (d *DB) InsertVector(table, chunkID string, vec []float32) error {
+	if len(vec) == 0 {
+		return fmt.Errorf("empty vector for chunk %s", chunkID)
+	}
 	blob, err := json.Marshal(vec)
 	if err != nil {
 		return err

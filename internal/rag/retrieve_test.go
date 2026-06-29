@@ -175,3 +175,48 @@ func TestGenerateSubQueries(t *testing.T) {
 		t.Errorf("got %+v, want [召回率优化方法, 向量检索相关性]", subs)
 	}
 }
+
+// TestRetrieverParentChildJoin 验证父子分块：召回子块后按 parent_id 上溯返回父块，
+// 同一父块的多个子块去重为一个父块。
+func TestRetrieverParentChildJoin(t *testing.T) {
+	embedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"embedding":[1.0,0.0,0.0]}]}`))
+	}))
+	defer embedSrv.Close()
+
+	db, _ := store.Open(filepath.Join(t.TempDir(), "ragpc.db"))
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_ = db.CreateProvider(store.Provider{ID: "pe", BaseURL: embedSrv.URL, EmbedModel: "m", Kind: "embed", CreatedAt: now, UpdatedAt: now})
+	_ = db.CreateKB(store.KnowledgeBase{ID: "kbpc", EmbedProviderID: "pe", CreatedAt: now})
+
+	vtbl := store.SanitizeTableName("kbpc")
+	_ = db.EnsureVecTable(vtbl, 3)
+	_ = db.CreateDocument(store.Document{ID: "dpc", KBID: "kbpc", Filename: "f.txt", Status: "ready", CreatedAt: now})
+	// 父块（不向量化）
+	_ = db.CreateChunk(store.Chunk{ID: "p1", DocID: "dpc", KBID: "kbpc", Ordinal: 0, Text: "父块1完整内容"})
+	_ = db.CreateChunk(store.Chunk{ID: "p2", DocID: "dpc", KBID: "kbpc", Ordinal: 1, Text: "父块2完整内容"})
+	// 子块（向量化，parent_id 指向父）
+	_ = db.CreateChunk(store.Chunk{ID: "c1a", DocID: "dpc", KBID: "kbpc", Ordinal: 2, Text: "子1a片段", ParentID: "p1"})
+	_ = db.InsertVector(vtbl, "c1a", []float32{1.0, 0.0, 0.0})
+	_ = db.CreateChunk(store.Chunk{ID: "c1b", DocID: "dpc", KBID: "kbpc", Ordinal: 3, Text: "子1b片段", ParentID: "p1"})
+	_ = db.InsertVector(vtbl, "c1b", []float32{0.9, 0.1, 0.0})
+	_ = db.CreateChunk(store.Chunk{ID: "c2a", DocID: "dpc", KBID: "kbpc", Ordinal: 4, Text: "子2a片段", ParentID: "p2"})
+	_ = db.InsertVector(vtbl, "c2a", []float32{0.0, 1.0, 0.0})
+
+	r := &Retriever{DB: db, EmbedClient: llm.NewOpenAIClient(llm.Config{BaseURL: embedSrv.URL, Model: "m"})}
+	hits, err := r.Search(context.Background(), "kbpc", "zzzzz", 5) // zzzzz 不命中 FTS → 纯向量路
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	// c1a, c1b 同父 p1 去重；c2a → p2。结果应为 [p1, p2]
+	if len(hits) != 2 {
+		t.Fatalf("len=%d, want 2 (p1+p2 after dedup): %+v", len(hits), hits)
+	}
+	if hits[0].ChunkID != "p1" || hits[0].Text != "父块1完整内容" {
+		t.Errorf("hits[0]=%+v, want p1 with parent text", hits[0])
+	}
+	if hits[1].ChunkID != "p2" {
+		t.Errorf("hits[1]=%+v, want p2", hits[1])
+	}
+}

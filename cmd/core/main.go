@@ -51,11 +51,13 @@ func main() {
 	// if any. These enable KB ingest and chat-time RAG; absent a configured
 	// embed model they stay nil and those features are disabled gracefully.
 	var embedClient llm.LLMClient
+	var embedModel string
 	var ragRetriever agent.RAGRetriever
 	if def, err := db.GetDefaultProviderByKind("embed"); err == nil && def.EmbedModel != "" {
 		embedClient = llm.NewOpenAIClient(llm.Config{
 			BaseURL: def.BaseURL, APIKey: def.APIKey, Model: def.EmbedModel,
 		})
+		embedModel = def.EmbedModel
 		// 默认 rerank provider（可选）：未配置时 RerankClient 为 nil，检索走纯 RRF。
 		var rerankClient llm.RerankClient
 		if rdef, err := db.GetDefaultProviderByKind("rerank"); err == nil && rdef.ChatModel != "" {
@@ -75,7 +77,7 @@ func main() {
 
 	router := server.NewRouter(server.Deps{
 		DB: db, Gate: gate, Engine: baseEngine,
-		EmbedClient: embedClient, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
+		EmbedClient: embedClient, EmbedModel: embedModel, RAG: ragRetriever, Skills: skillsManager, MCP: mcpManager, WorkDir: workDir,
 		Rules: rulesStore,
 		UploadDir: filepath.Join(*dataDir, "uploads"),
 	})

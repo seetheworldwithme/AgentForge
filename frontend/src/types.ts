@@ -47,6 +47,7 @@ export interface KnowledgeBase {
   embed_provider_id: string;
   chat_provider_id?: string;
   rerank_provider_id?: string;
+  index_mode?: 'chunk' | 'qa';
   chunk_size: number;
   chunk_overlap: number;
   doc_count: number;

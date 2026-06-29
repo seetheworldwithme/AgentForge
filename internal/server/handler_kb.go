@@ -28,6 +28,7 @@ import (
 type KBHandler struct {
 	DB          *store.DB
 	EmbedClient llm.LLMClient // for ingest + retrieve (nil until configured)
+	EmbedModel  string        // 全局默认 embedding 模型名（缓存 key）；KB 绑定的优先
 	RAG         agent.RAGRetriever
 	UploadDir   string
 }
@@ -54,6 +55,7 @@ type kbDTO struct {
 	EmbedProvider  string `json:"embed_provider_id"`
 	ChatProvider   string `json:"chat_provider_id"`
 	RerankProvider string `json:"rerank_provider_id"`
+	IndexMode      string `json:"index_mode"`
 	ChunkSize      int    `json:"chunk_size"`
 	ChunkOverlap   int    `json:"chunk_overlap"`
 	DocCount       int    `json:"doc_count"`
@@ -104,6 +106,7 @@ func (h *KBHandler) list(w http.ResponseWriter, r *http.Request) {
 			ID: k.ID, Name: k.Name, Description: k.Description,
 			EmbedProvider: k.EmbedProviderID, ChatProvider: k.ChatProviderID,
 			RerankProvider: k.RerankProviderID,
+			IndexMode: k.IndexMode,
 			ChunkSize: k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
 			DocCount: k.DocCount, CreatedAt: k.CreatedAt,
 		}
@@ -122,6 +125,7 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 		ID: "kb_" + ulid.Make().String(), Name: dto.Name, Description: dto.Description,
 		EmbedProviderID: dto.EmbedProvider, ChatProviderID: dto.ChatProvider,
 		RerankProviderID: dto.RerankProvider,
+		IndexMode: dto.IndexMode,
 		ChunkSize: dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
 		CreatedAt: now,
 	}
@@ -133,6 +137,7 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 		ID: kb.ID, Name: kb.Name, Description: kb.Description,
 		EmbedProvider: kb.EmbedProviderID, ChatProvider: kb.ChatProviderID,
 		RerankProvider: kb.RerankProviderID,
+		IndexMode: kb.IndexMode,
 		ChunkSize: kb.ChunkSize, ChunkOverlap: kb.ChunkOverlap,
 		DocCount: kb.DocCount, CreatedAt: kb.CreatedAt,
 	})
@@ -159,6 +164,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 	current.EmbedProviderID = dto.EmbedProvider
 	current.ChatProviderID = dto.ChatProvider
 	current.RerankProviderID = dto.RerankProvider
+	current.IndexMode = dto.IndexMode
 	current.ChunkSize = dto.ChunkSize
 	current.ChunkOverlap = dto.ChunkOverlap
 	if err := h.DB.UpdateKB(current); err != nil {
@@ -170,6 +176,7 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 		ID: updated.ID, Name: updated.Name, Description: updated.Description,
 		EmbedProvider: updated.EmbedProviderID, ChatProvider: updated.ChatProviderID,
 		RerankProvider: updated.RerankProviderID,
+		IndexMode: updated.IndexMode,
 		ChunkSize: updated.ChunkSize, ChunkOverlap: updated.ChunkOverlap,
 		DocCount: updated.DocCount, CreatedAt: updated.CreatedAt,
 	})
@@ -389,17 +396,19 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 		return
 	}
 	kb, _ := h.DB.GetKB(kbID)
-	embedClient := h.embedClientForKB(kb)
+	embedClient, embedModel := h.embedClientForKB(kb)
 	if embedClient == nil {
 		log.Printf("ingest: doc=%s skipped: no embed provider configured", doc.ID)
 		_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, "no embed provider configured")
 		return
 	}
+	chatClient := h.visionClientForKB(kb) // KB chat provider：VLM 图片描述 + QA/摘要生成
 	ing := &rag.Ingestor{
-		DB: h.DB, Embed: embedClient, KBID: kbID,
+		DB: h.DB, Embed: embedClient, KBID: kbID, EmbedModel: embedModel,
+		Chat: chatClient, IndexMode: kb.IndexMode,
 		ChunkSz: kb.ChunkSize, Overlap: kb.ChunkOverlap,
 		Parser: pickParser(doc.Filename, doc.MimeType),
-		Vision: h.visionClientForKB(kb),
+		Vision: chatClient,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -408,15 +417,15 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 	}
 }
 
-func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) llm.LLMClient {
+func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) (llm.LLMClient, string) {
 	if kb.EmbedProviderID != "" {
 		if p, err := h.DB.GetProvider(kb.EmbedProviderID); err == nil && p.EmbedModel != "" {
 			return llm.NewOpenAIClient(llm.Config{
 				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.EmbedModel,
-			})
+			}), p.EmbedModel
 		}
 	}
-	return h.EmbedClient
+	return h.EmbedClient, h.EmbedModel
 }
 
 // visionClientForKB 返回 KB 绑定的 chat（含 VL）模型客户端，用于把文档图片

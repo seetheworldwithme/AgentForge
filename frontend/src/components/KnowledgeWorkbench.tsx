@@ -35,6 +35,7 @@ export function KnowledgeWorkbench() {
   const [providerId, setProviderId] = useState('');
   const [chatProviderId, setChatProviderId] = useState('');
   const [rerankProviderId, setRerankProviderId] = useState('');
+  const [indexMode, setIndexMode] = useState<'chunk' | 'qa'>('chunk');
   const [chunkSize, setChunkSize] = useState(DEFAULT_CHUNK_SIZE);
   const [overlap, setOverlap] = useState(DEFAULT_OVERLAP);
   const [search, setSearch] = useState('');
@@ -70,6 +71,7 @@ export function KnowledgeWorkbench() {
     setProviderId(active.embed_provider_id ?? '');
     setChatProviderId(active.chat_provider_id ?? '');
     setRerankProviderId(active.rerank_provider_id ?? '');
+    setIndexMode((active.index_mode as 'chunk' | 'qa') ?? 'chunk');
     setChunkSize(active.chunk_size || DEFAULT_CHUNK_SIZE);
     setOverlap(active.chunk_overlap || DEFAULT_OVERLAP);
   }, [active?.id]);
@@ -94,6 +96,7 @@ export function KnowledgeWorkbench() {
       providerId !== (active.embed_provider_id ?? '') ||
       chatProviderId !== (active.chat_provider_id ?? '') ||
       rerankProviderId !== (active.rerank_provider_id ?? '') ||
+      indexMode !== (active.index_mode ?? 'chunk') ||
       chunkSize !== (active.chunk_size || DEFAULT_CHUNK_SIZE) ||
       overlap !== (active.chunk_overlap || DEFAULT_OVERLAP));
 
@@ -116,6 +119,7 @@ export function KnowledgeWorkbench() {
       embed_provider_id: providerId,
       chat_provider_id: chatProviderId,
       rerank_provider_id: rerankProviderId,
+      index_mode: indexMode,
       chunk_size: chunkSize,
       chunk_overlap: overlap,
     });
@@ -394,6 +398,22 @@ export function KnowledgeWorkbench() {
                     </select>
                     <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
                       可选：对召回结果重排序，未选则走纯 RRF 融合
+                    </span>
+                  </label>
+                  <label className="block">
+                    <span className="mb-1 block text-xs font-medium text-muted-foreground">
+                      索引模式
+                    </span>
+                    <select
+                      className="field"
+                      value={indexMode}
+                      onChange={(e) => setIndexMode(e.target.value as 'chunk' | 'qa')}
+                    >
+                      <option value="chunk">分块（父子分块，适合通用文档）</option>
+                      <option value="qa">问答对（LLM 转问答，适合 FAQ；需 Chat 模型）</option>
+                    </select>
+                    <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
+                      qa 模式入库较慢（每段调 LLM 生成问答）
                     </span>
                   </label>
                   <div className="grid grid-cols-2 gap-2.5">

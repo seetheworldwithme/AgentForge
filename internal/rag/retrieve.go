@@ -189,22 +189,54 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 		orderedIDs = orderedIDs[:k]
 	}
 
-	// 组装 SearchHit
+	// 父子分块：召回的是子块，按 parent_id 上溯到父块返回（去重，保持顺序）。
+	// 老数据（无 parent_id）按 flat 处理，返回自身。
+	parentIDSet := make(map[string]struct{})
+	for _, id := range orderedIDs {
+		if c, ok := chunkByID[id]; ok && c.ParentID != "" {
+			parentIDSet[c.ParentID] = struct{}{}
+		}
+	}
+	parentByID := make(map[string]store.Chunk)
+	if len(parentIDSet) > 0 {
+		pids := make([]string, 0, len(parentIDSet))
+		for pid := range parentIDSet {
+			pids = append(pids, pid)
+		}
+		if parents, err := r.DB.GetChunksByIDs(pids); err == nil {
+			for _, p := range parents {
+				parentByID[p.ID] = p
+			}
+		}
+	}
+
 	usedRerank := len(rerankScore) > 0
+	seen := make(map[string]struct{}, len(orderedIDs))
 	out := make([]SearchHit, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		c, ok := chunkByID[id]
 		if !ok {
 			continue
 		}
-		doc, _ := r.DB.GetDocument(c.DocID)
+		// 决定返回的 chunk：qa 返回自身（问答对自含答案）；content/summary 上溯父块返回上下文
+		ret := c
+		if c.Kind != "qa" && c.ParentID != "" {
+			if p, ok := parentByID[c.ParentID]; ok {
+				ret = p
+			}
+		}
+		if _, dup := seen[ret.ID]; dup {
+			continue
+		}
+		seen[ret.ID] = struct{}{}
+		doc, _ := r.DB.GetDocument(ret.DocID)
 		hit := SearchHit{
-			ChunkID: c.ID, DocumentID: c.DocID, Filename: doc.Filename,
-			Ordinal: c.Ordinal, Text: c.Text,
+			ChunkID: ret.ID, DocumentID: ret.DocID, Filename: doc.Filename,
+			Ordinal: ret.Ordinal, Text: ret.Text,
 		}
 		switch {
 		case usedRerank:
-			hit.Score = rerankScore[id]
+			hit.Score = rerankScore[id] // 用触发子块的 rerank 分
 		default:
 			if d, hasVec := vecDist[id]; hasVec {
 				hit.Distance = d
