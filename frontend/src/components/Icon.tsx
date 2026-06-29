@@ -39,7 +39,9 @@ export type IconName =
   | 'archive'
   | 'eye'
   | 'eye-off'
-  | 'download';
+  | 'download'
+  | 'pause'
+  | 'play';
 
 const PATHS: Record<IconName, ReactNode> = {
   sparkles: (
@@ -191,6 +193,13 @@ const PATHS: Record<IconName, ReactNode> = {
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
     </>
   ),
+  pause: (
+    <>
+      <rect x="6" y="5" width="3" height="14" rx="1" />
+      <rect x="15" y="5" width="3" height="14" rx="1" />
+    </>
+  ),
+  play: <polygon points="6 3 20 12 6 21 6 3" />,
   wrench: (
     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
   ),

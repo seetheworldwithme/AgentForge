@@ -34,7 +34,7 @@ type Ingestor struct {
 // IngestFile parses, chunks, embeds (batched), and stores a document. Every
 // failure path marks the document "failed" with a reason and logs it, so an
 // ingest that dies mid-way never leaves the document stuck on "processing".
-func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType string, raw []byte) error {
+func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType string, raw []byte, resumeFrom int) error {
 	log.Printf("ingest: doc=%s file=%q start", docID, filename)
 	p := ing.Parser
 	if p == nil {
@@ -44,6 +44,10 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 	if err != nil {
 		ing.fail(docID, "parse", 0, err)
 		return err
+	}
+	// 全新入库(resumeFrom==0)：重置进度，让图片描述阶段前端显示"解析中…"而非旧的 0/total。
+	if resumeFrom == 0 {
+		_ = ing.DB.SetDocumentProgress(docID, 0, 0)
 	}
 	// 把图片占位符替换成 VLM 描述（按文档位置）；没配 VLM 或失败则清除。
 	text := ing.fillImagePlaceholders(ctx, docID, result)
@@ -77,13 +81,16 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 				leaves = append(leaves, leafEntry{parentIdx: pi, embText: ch, storeText: ch, kind: "content"})
 			}
 		}
-		if ing.Chat != nil {
-			if summary := ing.generateSummary(ctx, docID, p); summary != "" {
-				leaves = append(leaves, leafEntry{parentIdx: pi, embText: summary, storeText: summary, kind: "summary"})
-			}
-		}
+		// 注：摘要索引（每父块生成摘要）默认不启用——大文档下每父块一次 Chat 会严重拖慢入库。
+		// 如需启用，应在 KB 级别显式开关，而非「配了 chat 就自动摘要」。generateSummary 方法保留备用。
 	}
-	log.Printf("ingest: doc=%s parsed %d chars -> %d parents, %d leaves", docID, len(text), len(parents), len(leaves))
+	log.Printf("ingest: doc=%s parsed %d chars -> %d parents, %d leaves (resumeFrom=%d)", docID, len(text), len(parents), len(leaves), resumeFrom)
+
+	// 续传一致性：resumeFrom 超过叶子数（切分参数变化/图片描述变化等）则从头。
+	if resumeFrom > len(leaves) {
+		log.Printf("ingest: doc=%s resumeFrom %d > leaves %d, starting fresh", docID, resumeFrom, len(leaves))
+		resumeFrom = 0
+	}
 
 	// FTS5 表不依赖 embedding 维度，先建好（trigram 全文索引）。
 	if err := ing.DB.EnsureFTSTable(ftsTable(ing.KBID)); err != nil {
@@ -91,109 +98,153 @@ func (ing *Ingestor) IngestFile(ctx context.Context, docID, filename, mimeType s
 		return err
 	}
 
-	// 写父块（仅存文本，不向量化/FTS，供检索时 join 返回上下文）。
+	// 父块（仅存文本，不向量化/FTS，供检索时 join 返回上下文）。
+	// 全新(resumeFrom==0)：生成并写入；恢复(resumeFrom>0)：父块已写，从 DB 读回 ID。
 	parentIDs := make([]string, len(parents))
-	for pi, p := range parents {
-		parentIDs[pi] = "chunk_" + ulid.Make().String()
-		if err := ing.DB.CreateChunk(store.Chunk{
-			ID: parentIDs[pi], DocID: docID, KBID: ing.KBID, Ordinal: pi, Text: p,
-		}); err != nil {
-			ing.fail(docID, "store", pi, err)
-			return err
-		}
-	}
-
-	// 叶子嵌入（走 embedding 缓存）：算 hash → 查缓存 → 未命中批量嵌入 → 回写缓存。
-	leafTexts := make([]string, len(leaves))
-	for i, l := range leaves {
-		leafTexts[i] = l.embText
-	}
-	hashes := make([]string, len(leaves))
-	for i, t := range leafTexts {
-		hashes[i] = hashText(t)
-	}
-	model := ing.EmbedModel
-	vecByHash := make(map[string][]float32, len(leaves))
-	if cached, err := ing.DB.GetCachedEmbeddings(model, hashes); err == nil {
-		for h, v := range cached {
-			vecByHash[h] = v
-		}
-	} else {
-		log.Printf("ingest: doc=%s embedding cache read failed (proceeding without cache): %v", docID, err)
-	}
-	var missIdx []int
-	for i, h := range hashes {
-		if _, ok := vecByHash[h]; !ok {
-			missIdx = append(missIdx, i)
-		}
-	}
-	const batch = 64
-	for s := 0; s < len(missIdx); s += batch {
-		e := s + batch
-		if e > len(missIdx) {
-			e = len(missIdx)
-		}
-		batchIdx := missIdx[s:e]
-		texts := make([]string, len(batchIdx))
-		for k, idx := range batchIdx {
-			texts[k] = leafTexts[idx]
-		}
-		vecs, err := ing.Embed.Embed(ctx, texts)
-		if err != nil {
-			ing.fail(docID, "embed", s, err)
-			return err
-		}
-		if len(vecs) != len(batchIdx) {
-			err := fmt.Errorf("embed returned %d vectors for %d chunks", len(vecs), len(batchIdx))
-			ing.fail(docID, "embed", s, err)
-			return err
-		}
-		for k, vec := range vecs {
-			idx := batchIdx[k]
-			vecByHash[hashes[idx]] = vec
-			if err := ing.DB.PutCachedEmbedding(model, hashes[idx], vec); err != nil {
-				log.Printf("ingest: doc=%s embedding cache write failed: %v", docID, err)
+	if resumeFrom == 0 {
+		for pi, p := range parents {
+			parentIDs[pi] = "chunk_" + ulid.Make().String()
+			if err := ing.DB.CreateChunk(store.Chunk{
+				ID: parentIDs[pi], DocID: docID, KBID: ing.KBID, Ordinal: pi, Text: p,
+			}); err != nil {
+				ing.fail(docID, "store", pi, err)
+				return err
 			}
 		}
-		log.Printf("ingest: doc=%s embedded %d/%d leaves (cache miss)", docID, e, len(missIdx))
+	} else {
+		existing, err := ing.DB.ListChunksByDoc(docID)
+		if err != nil {
+			ing.fail(docID, "store", 0, err)
+			return err
+		}
+		for _, c := range existing {
+			if c.Ordinal >= 0 && c.Ordinal < len(parents) {
+				parentIDs[c.Ordinal] = c.ID
+			}
+		}
+		// 父块完整性校验：切分参数变化（chunk_size/index_mode）或上轮中断在写父块会导致
+		// 父块缺失。此时不续传（否则叶子悬空、新旧切分混合索引），标 failed 让用户 retry 重建。
+		for _, id := range parentIDs {
+			if id == "" {
+				err := fmt.Errorf("续传不一致：父块缺失（可能配置已变更），请重试重建索引")
+				ing.fail(docID, "resume", resumeFrom, err)
+				return err
+			}
+		}
 	}
 
-	// 确定向量维度（首个非空向量），建 vec0 表。
+	// 进度初始化（done 从 resumeFrom 开始，前端进度条不倒退）。
+	_ = ing.DB.SetDocumentProgress(docID, resumeFrom, len(leaves))
+
+	// 逐批处理叶子[resumeFrom:]：嵌入（走缓存）+ 写库 + 更新进度。每批结束刷新 chunk_done，
+	// 中断（core 关闭/ctx 超时）后下次从 chunk_done 恢复。
+	pending := leaves[resumeFrom:]
 	dim := 0
-	for _, v := range vecByHash {
-		if len(v) > 0 {
-			dim = len(v)
-			break
+	const batch = 64
+	for s := 0; s < len(pending); s += batch {
+		e := s + batch
+		if e > len(pending) {
+			e = len(pending)
 		}
-	}
-	if dim == 0 {
-		err := fmt.Errorf("no embeddings produced for %d leaves", len(leaves))
-		ing.fail(docID, "embed", 0, err)
-		return err
-	}
-	if err := ing.DB.EnsureVecTable(vecTable(ing.KBID), dim); err != nil {
-		ing.fail(docID, "vec-table", 0, err)
-		return err
-	}
-
-	// 写叶子：文本(storeText) + 向量 + FTS(embText) + parent_id + kind。
-	for i, l := range leaves {
-		chunkID := "chunk_" + ulid.Make().String()
-		if err := ing.DB.CreateChunk(store.Chunk{
-			ID: chunkID, DocID: docID, KBID: ing.KBID, Ordinal: len(parents) + i, Text: l.storeText,
-			ParentID: parentIDs[l.parentIdx], Kind: l.kind,
-		}); err != nil {
-			ing.fail(docID, "store", i, err)
+		batchLeaves := pending[s:e]
+		texts := make([]string, len(batchLeaves))
+		hashes := make([]string, len(batchLeaves))
+		for k, l := range batchLeaves {
+			texts[k] = l.embText
+			hashes[k] = hashText(l.embText)
+		}
+		// 查 embedding 缓存
+		vecByHash := make(map[string][]float32, len(batchLeaves))
+		model := ing.EmbedModel
+		if cached, err := ing.DB.GetCachedEmbeddings(model, hashes); err == nil {
+			for h, v := range cached {
+				vecByHash[h] = v
+			}
+		} else {
+			log.Printf("ingest: doc=%s embedding cache read failed (proceeding without cache): %v", docID, err)
+		}
+		// 未命中批量嵌入
+		var missK []int
+		for k, h := range hashes {
+			if _, ok := vecByHash[h]; !ok {
+				missK = append(missK, k)
+			}
+		}
+		if len(missK) > 0 {
+			missTexts := make([]string, len(missK))
+			for k, idx := range missK {
+				missTexts[k] = texts[idx]
+			}
+			vecs, err := ing.Embed.Embed(ctx, missTexts)
+			if err != nil {
+				// ctx 取消（暂停）或超时：保留当前 status + 刷新进度，下次续传接力（不标 failed）。
+				if ctx.Err() != nil {
+					done := resumeFrom + s
+					log.Printf("ingest: doc=%s stopped at leaf %d/%d (ctx: %v), will resume", docID, done, len(leaves), ctx.Err())
+					_ = ing.DB.SetDocumentProgress(docID, done, len(leaves))
+					return nil
+				}
+				ing.fail(docID, "embed", resumeFrom+s, err)
+				return err
+			}
+			if len(vecs) != len(missK) {
+				err := fmt.Errorf("embed returned %d vectors for %d chunks", len(vecs), len(missK))
+				ing.fail(docID, "embed", resumeFrom+s, err)
+				return err
+			}
+			for k, vec := range vecs {
+				idx := missK[k]
+				vecByHash[hashes[idx]] = vec
+				if dim == 0 && len(vec) > 0 {
+					dim = len(vec)
+				}
+				if err := ing.DB.PutCachedEmbedding(model, hashes[idx], vec); err != nil {
+					log.Printf("ingest: doc=%s embedding cache write failed: %v", docID, err)
+				}
+			}
+		}
+		// 确定向量维度（首批），建 vec0 表（IF NOT EXISTS，后续批无害）。
+		if dim == 0 {
+			for _, v := range vecByHash {
+				if len(v) > 0 {
+					dim = len(v)
+					break
+				}
+			}
+		}
+		if dim == 0 {
+			err := fmt.Errorf("no embeddings produced for batch at leaf %d", resumeFrom+s)
+			ing.fail(docID, "embed", resumeFrom+s, err)
 			return err
 		}
-		if err := ing.DB.InsertVector(vecTable(ing.KBID), chunkID, vecByHash[hashes[i]]); err != nil {
-			ing.fail(docID, "store", i, err)
+		if err := ing.DB.EnsureVecTable(vecTable(ing.KBID), dim); err != nil {
+			ing.fail(docID, "vec-table", 0, err)
 			return err
 		}
-		if err := ing.DB.InsertFTS(ftsTable(ing.KBID), chunkID, l.embText); err != nil {
-			ing.fail(docID, "fts-store", i, err)
-			return err
+		// 写本批叶子：文本(storeText) + 向量 + FTS(embText) + parent_id + kind。
+		for k, l := range batchLeaves {
+			leafIdx := resumeFrom + s + k
+			chunkID := "chunk_" + ulid.Make().String()
+			if err := ing.DB.CreateChunk(store.Chunk{
+				ID: chunkID, DocID: docID, KBID: ing.KBID, Ordinal: len(parents) + leafIdx, Text: l.storeText,
+				ParentID: parentIDs[l.parentIdx], Kind: l.kind,
+			}); err != nil {
+				ing.fail(docID, "store", leafIdx, err)
+				return err
+			}
+			if err := ing.DB.InsertVector(vecTable(ing.KBID), chunkID, vecByHash[hashes[k]]); err != nil {
+				ing.fail(docID, "store", leafIdx, err)
+				return err
+			}
+			if err := ing.DB.InsertFTS(ftsTable(ing.KBID), chunkID, l.embText); err != nil {
+				ing.fail(docID, "fts-store", leafIdx, err)
+				return err
+			}
 		}
+		// 刷新进度
+		done := resumeFrom + e
+		_ = ing.DB.SetDocumentProgress(docID, done, len(leaves))
+		log.Printf("ingest: doc=%s progress %d/%d leaves", docID, done, len(leaves))
 	}
 
 	_ = ing.DB.SetDocumentStatus(docID, "ready", len(leaves), "")
@@ -212,13 +263,13 @@ func (ing *Ingestor) chunkSize() int {
 	if ing.ChunkSz > 0 {
 		return ing.ChunkSz
 	}
-	return 800
+	return 500
 }
 func (ing *Ingestor) overlap() int {
 	if ing.Overlap > 0 {
 		return ing.Overlap
 	}
-	return 100
+	return 60
 }
 
 func vecTable(kbID string) string { return store.SanitizeTableName(kbID) }
@@ -261,17 +312,27 @@ func (ing *Ingestor) describeImages(ctx context.Context, docID string, imgs []pa
 		log.Printf("ingest: doc=%s has %d images, describing first %d only", docID, n, maxImagesPerDoc)
 		n = maxImagesPerDoc
 	}
+	// 限制 VLM 并发（4）：一次 20 张并发易触发 provider 限流，反而整体更慢。
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	done := 0
+	sem := make(chan struct{}, 4)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			desc, err := ing.describeOneImage(ctx, imgs[i])
 			if err != nil {
 				log.Printf("ingest: doc=%s image %d VLM failed: %v", docID, i, err)
 				return
 			}
 			descs[i] = desc
+			mu.Lock()
+			done++
+			log.Printf("ingest: doc=%s described image %d/%d", docID, done, n)
+			mu.Unlock()
 		}(i)
 	}
 	wg.Wait()

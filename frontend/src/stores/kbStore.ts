@@ -15,6 +15,8 @@ interface KBState {
   upload: (kbId: string, file: File) => Promise<void>;
   deleteDoc: (kbId: string, docId: string) => Promise<void>;
   retryDoc: (kbId: string, docId: string) => Promise<void>;
+  pauseDoc: (kbId: string, docId: string) => Promise<void>;
+  resumeDoc: (kbId: string, docId: string) => Promise<void>;
   loadChunks: (kbId: string, docId: string) => Promise<void>;
   previewChunks: (kbId: string, text: string, chunkSize: number, overlap: number) => Promise<ChunkPreview[]>;
   retrieve: (kbId: string, query: string, topK: number) => Promise<void>;
@@ -24,15 +26,15 @@ interface KBState {
 // min to match the server ingest timeout), so the UI refreshes to ready/failed
 // instead of freezing on a stale "processing" badge.
 function pollUntilSettled(get: () => KBState, kbId: string) {
-  let tries = 0;
   const tick = async () => {
     await get().loadDocs(kbId);
     const docs = get().docsByKb[kbId] ?? [];
-    if (docs.some((d) => d.status === 'processing') && ++tries < 300) {
-      setTimeout(tick, 2000);
+    // 续传后单文档可能跨多次 core 重启，累计远超 10min，故不设硬上限；间隔 5s。
+    if (docs.some((d) => d.status === 'processing')) {
+      setTimeout(tick, 5000);
     }
   };
-  setTimeout(tick, 2000);
+  setTimeout(tick, 5000);
 }
 
 export const useKBStore = create<KBState>((set, get) => ({
@@ -68,6 +70,15 @@ export const useKBStore = create<KBState>((set, get) => ({
   },
   retryDoc: async (kbId, docId) => {
     await api.retryDocument(kbId, docId);
+    await get().loadDocs(kbId);
+    pollUntilSettled(get, kbId);
+  },
+  pauseDoc: async (kbId, docId) => {
+    await api.pauseDocument(kbId, docId);
+    await get().loadDocs(kbId);
+  },
+  resumeDoc: async (kbId, docId) => {
+    await api.resumeDocument(kbId, docId);
     await get().loadDocs(kbId);
     pollUntilSettled(get, kbId);
   },

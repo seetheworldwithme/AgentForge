@@ -3,6 +3,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
 import { useKBStore } from '../stores/kbStore';
+import { useImagePreviewStore } from '../stores/imagePreviewStore';
 import { api } from '../lib/api';
 import { estimateMessagesTokens, estimateTokens } from '../lib/tokens';
 import { Icon, type IconName } from './Icon';
@@ -41,6 +42,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
   const sessions = useSessionStore((s) => s.sessions);
   const messages = useSessionStore((s) => s.messages);
   const select = useSessionStore((s) => s.select);
+  const openPreview = useImagePreviewStore((s) => s.open);
 
   const providers = useConfigStore((s) => s.providers);
   const loaded = useConfigStore((s) => s.loaded);
@@ -412,12 +414,19 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
           <div className="flex flex-wrap items-center gap-1.5 px-2.5 pt-2">
             {images.map((src, idx) => (
               <div key={idx} className="relative">
-                <img
-                  src={src}
-                  alt={`图片 ${idx + 1}`}
-                  loading="lazy"
-                  className="h-14 w-14 rounded-lg border border-border object-cover"
-                />
+                <button
+                  type="button"
+                  onClick={() => openPreview(images, idx)}
+                  title="点击预览"
+                  className="cursor-zoom-in rounded-lg border border-border transition hover:opacity-90 hover:ring-2 hover:ring-primary/40"
+                >
+                  <img
+                    src={src}
+                    alt={`图片 ${idx + 1}`}
+                    loading="lazy"
+                    className="h-14 w-14 rounded-lg object-cover"
+                  />
+                </button>
                 <button
                   type="button"
                   onClick={() => setImages((cur) => cur.filter((_, i) => i !== idx))}

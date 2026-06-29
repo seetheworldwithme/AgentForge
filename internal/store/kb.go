@@ -25,6 +25,8 @@ type Document struct {
 	Error       string
 	RawPath     string
 	ContentHash string
+	ChunkDone   int // 已写入叶子数（进度分子 + 续传锚点）
+	ChunkTotal  int // 叶子总数（进度分母）
 	CreatedAt   string
 }
 
@@ -127,11 +129,11 @@ func (d *DB) DeleteKB(id string) error {
 
 func (d *DB) CreateDocument(doc Document) error {
 	_, err := d.sql.Exec(`INSERT INTO documents
-		(id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		(id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,chunk_done,chunk_total,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		doc.ID, doc.KBID, doc.Filename, doc.FileSize, nullable(doc.MimeType),
 		doc.Status, doc.ChunkCount, nullable(doc.Error), nullable(doc.RawPath),
-		nullable(doc.ContentHash), doc.CreatedAt)
+		nullable(doc.ContentHash), doc.ChunkDone, doc.ChunkTotal, doc.CreatedAt)
 	if err == nil {
 		_ = d.refreshDocCount(doc.KBID)
 	}
@@ -139,13 +141,13 @@ func (d *DB) CreateDocument(doc Document) error {
 }
 
 func (d *DB) GetDocument(id string) (Document, error) {
-	row := d.sql.QueryRow(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at
+	row := d.sql.QueryRow(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,chunk_done,chunk_total,created_at
 		FROM documents WHERE id=?`, id)
 	return scanDocument(row)
 }
 
 func (d *DB) ListDocuments(kbID string) ([]Document, error) {
-	rows, err := d.sql.Query(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at
+	rows, err := d.sql.Query(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,chunk_done,chunk_total,created_at
 		FROM documents WHERE kb_id=? ORDER BY created_at`, kbID)
 	if err != nil {
 		return nil, err
@@ -211,7 +213,8 @@ func scanDocument(s scanner) (Document, error) {
 	var doc Document
 	var mime, errMsg, rawPath, contentHash *string
 	err := s.Scan(&doc.ID, &doc.KBID, &doc.Filename, &doc.FileSize, &mime,
-		&doc.Status, &doc.ChunkCount, &errMsg, &rawPath, &contentHash, &doc.CreatedAt)
+		&doc.Status, &doc.ChunkCount, &errMsg, &rawPath, &contentHash,
+		&doc.ChunkDone, &doc.ChunkTotal, &doc.CreatedAt)
 	if mime != nil {
 		doc.MimeType = *mime
 	}
@@ -225,6 +228,31 @@ func scanDocument(s scanner) (Document, error) {
 		doc.ContentHash = *contentHash
 	}
 	return doc, err
+}
+
+// SetDocumentProgress 更新入库进度（已写入叶子数 + 总数），供进度条与断点续传用。
+func (d *DB) SetDocumentProgress(id string, done, total int) error {
+	_, err := d.sql.Exec(`UPDATE documents SET chunk_done=?, chunk_total=? WHERE id=?`, done, total, id)
+	return err
+}
+
+// ListProcessingDocuments 返回所有处于 processing 的文档（core 启动时恢复入库用）。
+func (d *DB) ListProcessingDocuments() ([]Document, error) {
+	rows, err := d.sql.Query(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,chunk_done,chunk_total,created_at
+		FROM documents WHERE status='processing'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Document
+	for rows.Next() {
+		doc, err := scanDocument(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, doc)
+	}
+	return out, rows.Err()
 }
 
 func (d *DB) CreateChunk(c Chunk) error {

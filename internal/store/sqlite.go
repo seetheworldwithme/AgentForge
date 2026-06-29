@@ -107,6 +107,12 @@ func (d *DB) applyMigrations() error {
 	if err := d.ensureColumn("documents", "content_hash"); err != nil {
 		return err
 	}
+	if err := d.ensureColumnInt("documents", "chunk_done", 0); err != nil {
+		return err
+	}
+	if err := d.ensureColumnInt("documents", "chunk_total", 0); err != nil {
+		return err
+	}
 	if err := d.ensureColumn("chunks", "parent_id"); err != nil {
 		return err
 	}

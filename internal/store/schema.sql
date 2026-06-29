@@ -56,8 +56,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     chat_provider_id  TEXT REFERENCES providers(id),
     rerank_provider_id TEXT REFERENCES providers(id),
     index_mode        TEXT DEFAULT 'chunk', -- 'chunk'(父子分块) | 'qa'(问答对索引)
-    chunk_size        INTEGER DEFAULT 800,
-    chunk_overlap     INTEGER DEFAULT 100,
+    chunk_size        INTEGER DEFAULT 500,
+    chunk_overlap     INTEGER DEFAULT 60,
     doc_count         INTEGER DEFAULT 0,
     created_at        TEXT NOT NULL
 );
@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS documents (
     error       TEXT,
     raw_path    TEXT,
     content_hash TEXT,
+    chunk_done  INTEGER DEFAULT 0,
+    chunk_total INTEGER DEFAULT 0,
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);

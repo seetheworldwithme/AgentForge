@@ -114,6 +114,10 @@ export const api = {
   deleteDocument: (kbId: string, docId: string) => jdel(`/api/kb/${kbId}/documents/${docId}`),
   retryDocument: (kbId: string, docId: string) =>
     jpost<{ document_id: string; status: string }>(`/api/kb/${kbId}/documents/${docId}/retry`, {}),
+  pauseDocument: (kbId: string, docId: string) =>
+    jpost<{ document_id: string; status: string }>(`/api/kb/${kbId}/documents/${docId}/pause`, {}),
+  resumeDocument: (kbId: string, docId: string) =>
+    jpost<{ document_id: string; status: string }>(`/api/kb/${kbId}/documents/${docId}/resume`, {}),
   listChunks: (kbId: string, docId: string) =>
     jget<ChunkPreview[]>(`/api/kb/${kbId}/documents/${docId}/chunks`),
   chunkPreview: (kbId: string, body: { text: string; chunk_size: number; chunk_overlap: number }) =>

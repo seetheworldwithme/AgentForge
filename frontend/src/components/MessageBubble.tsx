@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSessionStore } from '../stores/sessionStore';
+import { useImagePreviewStore } from '../stores/imagePreviewStore';
 import { Icon } from './Icon';
 import { MarkdownMessage } from './MarkdownMessage';
 import { estimateTokens } from '../lib/tokens';
@@ -52,6 +53,7 @@ export function MessageBubble({
   const [draft, setDraft] = useState(m.content);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const content = m.role === 'assistant' ? m.content.trimStart() : m.content;
+  const openPreview = useImagePreviewStore((s) => s.open);
 
   // 思考过程折叠：仅 assistant 且有 thinking 时显示。流式思考中（正文还没出）默认展开并带
   // 三点动效；正文一开始即自动折叠。用户手动展开/收起后以用户操作为准，不再被自动覆盖。
@@ -271,13 +273,20 @@ export function MessageBubble({
         {isUser && Array.isArray(m.images) && m.images.length > 0 && (
           <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
             {m.images.map((src, idx) => (
-              <img
+              <button
                 key={idx}
-                src={src}
-                alt={`图片 ${idx + 1}`}
-                loading="lazy"
-                className="h-24 w-24 rounded-lg border border-border object-cover"
-              />
+                type="button"
+                onClick={() => openPreview(m.images as string[], idx)}
+                title="点击预览"
+                className="cursor-zoom-in rounded-lg border border-border transition hover:opacity-90 hover:ring-2 hover:ring-primary/40"
+              >
+                <img
+                  src={src}
+                  alt={`图片 ${idx + 1}`}
+                  loading="lazy"
+                  className="h-24 w-24 rounded-lg object-cover"
+                />
+              </button>
             ))}
           </div>
         )}

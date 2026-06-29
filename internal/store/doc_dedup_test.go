@@ -45,3 +45,38 @@ func TestDocumentDedup(t *testing.T) {
 		t.Errorf("processing doc should not count as duplicate target, got %q", dup)
 	}
 }
+
+func TestDocumentProgress(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "prog.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer db.Close()
+	const now = "2026-01-01T00:00:00Z"
+	if err := db.CreateKB(KnowledgeBase{ID: "kb_p", Name: "K", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateDocument(Document{ID: "d1", KBID: "kb_p", Status: "processing", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.CreateDocument(Document{ID: "d2", KBID: "kb_p", Status: "ready", CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetDocumentProgress("d1", 30, 100); err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := db.GetDocument("d1")
+	if doc.ChunkDone != 30 || doc.ChunkTotal != 100 {
+		t.Errorf("progress: done=%d total=%d, want 30/100", doc.ChunkDone, doc.ChunkTotal)
+	}
+	procs, err := db.ListProcessingDocuments()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 1 || procs[0].ID != "d1" {
+		t.Errorf("ListProcessing: got %+v, want only d1", procs)
+	}
+	if procs[0].ChunkDone != 30 || procs[0].ChunkTotal != 100 {
+		t.Errorf("ListProcessing progress mismatch: %+v", procs[0])
+	}
+}

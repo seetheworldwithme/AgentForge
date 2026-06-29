@@ -88,7 +88,9 @@ func NewRouter(d Deps) http.Handler {
 		chat.Routes(r)
 		(&ToolsHandler{Gate: d.Gate}).Routes(r)
 		(&AskHandler{Asker: d.Asker}).Routes(r)
-		(&KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, EmbedModel: d.EmbedModel, RAG: d.RAG, UploadDir: d.UploadDir}).Routes(r)
+		kb := &KBHandler{DB: d.DB, EmbedClient: d.EmbedClient, EmbedModel: d.EmbedModel, RAG: d.RAG, UploadDir: d.UploadDir}
+		kb.Routes(r)
+		go kb.RecoverProcessing() // 恢复 core 关闭前未完成的入库（断点续传）
 		(&WorkDirHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&TerminalHandler{WorkDir: d.WorkDir}).Routes(r)
 		(&SkillsHandler{Manager: d.Skills}).Routes(r)

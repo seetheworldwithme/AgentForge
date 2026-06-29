@@ -60,8 +60,10 @@ export interface Document {
   filename: string;
   file_size: number;
   mime_type: string;
-  status: 'processing' | 'ready' | 'failed' | string;
+  status: 'processing' | 'ready' | 'failed' | 'paused' | string;
   chunk_count: number;
+  chunk_done?: number;
+  chunk_total?: number;
   error?: string;
   raw_path?: string;
   created_at?: string;

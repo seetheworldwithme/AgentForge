@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agent-rust/core/internal/agent"
@@ -26,11 +27,13 @@ import (
 )
 
 type KBHandler struct {
-	DB          *store.DB
-	EmbedClient llm.LLMClient // for ingest + retrieve (nil until configured)
-	EmbedModel  string        // 全局默认 embedding 模型名（缓存 key）；KB 绑定的优先
-	RAG         agent.RAGRetriever
-	UploadDir   string
+	DB           *store.DB
+	EmbedClient  llm.LLMClient // for ingest + retrieve (nil until configured)
+	EmbedModel   string        // 全局默认 embedding 模型名（缓存 key）；KB 绑定的优先
+	RAG          agent.RAGRetriever
+	UploadDir    string
+	ingestMu     sync.Map // docID -> *sync.Mutex：同一文档入库串行化（upload/恢复/retry 互斥）
+	ingestCancel sync.Map // docID -> context.CancelFunc：暂停时取消入库 goroutine
 }
 
 func (h *KBHandler) Routes(r chi.Router) {
@@ -42,6 +45,8 @@ func (h *KBHandler) Routes(r chi.Router) {
 	r.Get("/kb/{id}/documents", h.listDocs)
 	r.Delete("/kb/{id}/documents/{doc_id}", h.deleteDoc)
 	r.Post("/kb/{id}/documents/{doc_id}/retry", h.retryDoc)
+	r.Post("/kb/{id}/documents/{doc_id}/pause", h.pauseDoc)
+	r.Post("/kb/{id}/documents/{doc_id}/resume", h.resumeDoc)
 	r.Get("/kb/{id}/documents/{doc_id}/chunks", h.listChunks)
 	r.Get("/kb/{id}/documents/{doc_id}/status", h.docStatus)
 	r.Post("/kb/{id}/chunk-preview", h.chunkPreview)
@@ -70,6 +75,8 @@ type documentDTO struct {
 	MimeType   string `json:"mime_type"`
 	Status     string `json:"status"`
 	ChunkCount int    `json:"chunk_count"`
+	ChunkDone  int    `json:"chunk_done"`
+	ChunkTotal int    `json:"chunk_total"`
 	Error      string `json:"error,omitempty"`
 	RawPath    string `json:"raw_path,omitempty"`
 	CreatedAt  string `json:"created_at"`
@@ -228,7 +235,7 @@ func (h *KBHandler) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.ingestDocument(kbID, doc, raw)
+	go h.ingestDocument(kbID, doc, raw, 0)
 
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"document_id": docID, "status": "processing",
@@ -276,10 +283,41 @@ func (h *KBHandler) retryDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "raw file unavailable: "+err.Error())
 		return
 	}
-	_ = h.clearDocIndex(kbID, docID)
 	_ = h.DB.SetDocumentStatus(docID, "processing", 0, "")
-	go h.ingestDocument(kbID, doc, raw)
+	_ = h.DB.SetDocumentProgress(docID, 0, 0)
+	go h.ingestDocument(kbID, doc, raw, 0)
 	writeJSON(w, http.StatusAccepted, map[string]any{"document_id": docID, "status": "processing"})
+}
+
+// pauseDoc 暂停入库：标记 paused + 取消正在跑的 ingest goroutine（保留已写进度）。
+func (h *KBHandler) pauseDoc(w http.ResponseWriter, r *http.Request) {
+	docID := chi.URLParam(r, "doc_id")
+	_ = h.DB.SetDocumentStatus(docID, "paused", 0, "")
+	if c, ok := h.ingestCancel.Load(docID); ok {
+		if cancel, ok := c.(context.CancelFunc); ok {
+			cancel()
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"document_id": docID, "status": "paused"})
+}
+
+// resumeDoc 继续入库：从已写进度(chunk_done)续传。
+func (h *KBHandler) resumeDoc(w http.ResponseWriter, r *http.Request) {
+	kbID := chi.URLParam(r, "id")
+	docID := chi.URLParam(r, "doc_id")
+	doc, err := h.DB.GetDocument(docID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	raw, err := os.ReadFile(doc.RawPath)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "raw file unavailable: "+err.Error())
+		return
+	}
+	_ = h.DB.SetDocumentStatus(docID, "processing", 0, "")
+	go h.ingestDocument(kbID, doc, raw, doc.ChunkDone)
+	writeJSON(w, http.StatusOK, map[string]any{"document_id": docID, "status": "processing"})
 }
 
 func (h *KBHandler) listChunks(w http.ResponseWriter, r *http.Request) {
@@ -378,7 +416,7 @@ func pickParser(filename, mime string) parser.Parser {
 	return parser.Txt{}
 }
 
-func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) {
+func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte, resumeFrom int) {
 	// ingest runs in a goroutine; a panic here must still flip the document
 	// to "failed", otherwise it stays "processing" forever with no clue.
 	defer func() {
@@ -387,13 +425,27 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 			_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, fmt.Sprintf("panic: %v", r))
 		}
 	}()
-	// 内容去重：同 KB 下已有内容相同（hash 一致）的 ready 文档则跳过，避免重复索引。
-	hash := sha256Hex(raw)
-	_ = h.DB.SetDocumentHash(doc.ID, hash)
-	if dupID, _ := h.DB.FindDuplicateDoc(kbID, hash, doc.ID); dupID != "" {
-		log.Printf("ingest: doc=%s skipped: duplicate of %s", doc.ID, dupID)
-		_ = h.DB.SetDocumentStatus(doc.ID, "duplicate", 0, "内容与已有文档重复，已跳过入库")
-		return
+	unlock := h.lockDoc(doc.ID)
+	defer unlock()
+
+	// 恢复场景：调用方传的 resumeFrom 可能是过期快照（retry/并发已改 chunk_done），
+	// 锁内重读最新值，避免续传跳写丢叶子（TOCTOU）。
+	if resumeFrom > 0 {
+		if fresh, err := h.DB.GetDocument(doc.ID); err == nil {
+			resumeFrom = fresh.ChunkDone
+		}
+	}
+
+	// 全新/retry(resumeFrom==0)：清残留 + 内容去重；恢复(resumeFrom>0)跳过（文档已过这关）。
+	if resumeFrom == 0 {
+		_ = h.clearDocIndex(kbID, doc.ID)
+		hash := sha256Hex(raw)
+		_ = h.DB.SetDocumentHash(doc.ID, hash)
+		if dupID, _ := h.DB.FindDuplicateDoc(kbID, hash, doc.ID); dupID != "" {
+			log.Printf("ingest: doc=%s skipped: duplicate of %s", doc.ID, dupID)
+			_ = h.DB.SetDocumentStatus(doc.ID, "duplicate", 0, "内容与已有文档重复，已跳过入库")
+			return
+		}
 	}
 	kb, _ := h.DB.GetKB(kbID)
 	embedClient, embedModel := h.embedClientForKB(kb)
@@ -411,9 +463,53 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 		Vision: chatClient,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	if err := ing.IngestFile(ctx, doc.ID, doc.Filename, doc.MimeType, raw); err != nil {
+	h.ingestCancel.Store(doc.ID, context.CancelFunc(cancel))
+	defer func() {
+		h.ingestCancel.Delete(doc.ID)
+		cancel()
+	}()
+	if err := ing.IngestFile(ctx, doc.ID, doc.Filename, doc.MimeType, raw, resumeFrom); err != nil {
 		log.Printf("ingest: doc=%s ingest failed: %v", doc.ID, err)
+	}
+}
+
+// lockDoc 返回解锁函数；同一 docID 的 ingestDocument 串行执行（upload/恢复/retry 互斥）。
+func (h *KBHandler) lockDoc(docID string) func() {
+	actual, _ := h.ingestMu.LoadOrStore(docID, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// RecoverProcessing 恢复所有 status=processing 的文档入库（core 启动时调用）。
+// 读 raw_path 续传；raw 缺失则标 failed。最多 4 并发。
+func (h *KBHandler) RecoverProcessing() {
+	docs, err := h.DB.ListProcessingDocuments()
+	if err != nil {
+		log.Printf("recover: list processing docs failed: %v", err)
+		return
+	}
+	if len(docs) == 0 {
+		return
+	}
+	log.Printf("recover: resuming %d processing documents", len(docs))
+	sem := make(chan struct{}, 4)
+	for _, doc := range docs {
+		if doc.RawPath == "" {
+			_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, "raw_path 缺失，无法续传")
+			continue
+		}
+		raw, err := os.ReadFile(doc.RawPath)
+		if err != nil {
+			_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, "读取 raw 失败: "+err.Error())
+			continue
+		}
+		doc := doc
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem }()
+			h.ingestDocument(doc.KBID, doc, raw, doc.ChunkDone)
+		}()
 	}
 }
 
@@ -518,6 +614,7 @@ func toDocumentDTO(d store.Document) documentDTO {
 	return documentDTO{
 		ID: d.ID, KBID: d.KBID, Filename: d.Filename, FileSize: d.FileSize,
 		MimeType: d.MimeType, Status: d.Status, ChunkCount: d.ChunkCount,
+		ChunkDone: d.ChunkDone, ChunkTotal: d.ChunkTotal,
 		Error: d.Error, RawPath: d.RawPath, CreatedAt: d.CreatedAt,
 	}
 }

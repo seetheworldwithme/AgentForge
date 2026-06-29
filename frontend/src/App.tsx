@@ -5,6 +5,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { KnowledgeWorkbench } from './components/KnowledgeWorkbench';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { AskUserDialog } from './components/AskUserDialog';
+import { ImageLightbox } from './components/ImageLightbox';
 import { useConfigStore } from './stores/configStore';
 import { useThemeStore } from './stores/themeStore';
 
@@ -30,6 +31,7 @@ export default function App() {
       <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <ConfirmDialog />
       <AskUserDialog />
+      <ImageLightbox />
     </div>
   );
 }

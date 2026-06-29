@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKBStore } from '../stores/kbStore';
 import { useConfigStore } from '../stores/configStore';
+import { vendorLabel } from '../lib/vendors';
 import { Icon } from './Icon';
 import type { Document, KnowledgeBase } from '../types';
 
-const DEFAULT_CHUNK_SIZE = 800;
-const DEFAULT_OVERLAP = 100;
+const DEFAULT_CHUNK_SIZE = 500;
+const DEFAULT_OVERLAP = 60;
 
 export function KnowledgeWorkbench() {
   const kbs = useKBStore((s) => s.kbs);
@@ -20,6 +21,8 @@ export function KnowledgeWorkbench() {
   const upload = useKBStore((s) => s.upload);
   const deleteDoc = useKBStore((s) => s.deleteDoc);
   const retryDoc = useKBStore((s) => s.retryDoc);
+  const pauseDoc = useKBStore((s) => s.pauseDoc);
+  const resumeDoc = useKBStore((s) => s.resumeDoc);
   const loadChunks = useKBStore((s) => s.loadChunks);
   const previewChunks = useKBStore((s) => s.previewChunks);
   const retrieve = useKBStore((s) => s.retrieve);
@@ -295,6 +298,8 @@ export function KnowledgeWorkbench() {
                           if (next) await loadChunks(active.id, doc.id);
                         }}
                         onRetry={() => retryDoc(active.id, doc.id)}
+                        onPause={() => pauseDoc(active.id, doc.id)}
+                        onResume={() => resumeDoc(active.id, doc.id)}
                         onDelete={() => deleteDoc(active.id, doc.id)}
                       />
                     ))
@@ -352,7 +357,7 @@ export function KnowledgeWorkbench() {
                       )}
                       {embedProviders.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} · {p.embed_model || '未配置'}
+                          {vendorLabel(p.base_url)} · {p.embed_model || '未配置'}
                         </option>
                       ))}
                     </select>
@@ -372,7 +377,7 @@ export function KnowledgeWorkbench() {
                       <option value="">未选择（可选）</option>
                       {chatProviders.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} · {p.chat_model || '未配置'}
+                          {vendorLabel(p.base_url)} · {p.chat_model || '未配置'}
                         </option>
                       ))}
                     </select>
@@ -392,7 +397,7 @@ export function KnowledgeWorkbench() {
                       <option value="">未选择（可选）</option>
                       {rerankProviders.map((p) => (
                         <option key={p.id} value={p.id}>
-                          {p.name} · {p.chat_model || '未配置'}
+                          {vendorLabel(p.base_url)} · {p.chat_model || '未配置'}
                         </option>
                       ))}
                     </select>
@@ -519,6 +524,8 @@ function DocumentRow({
   chunks,
   onToggle,
   onRetry,
+  onPause,
+  onResume,
   onDelete,
 }: {
   doc: Document;
@@ -527,6 +534,8 @@ function DocumentRow({
   chunks: { ordinal: number; text: string }[];
   onToggle: () => void;
   onRetry: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onDelete: () => void;
 }) {
   return (
@@ -541,7 +550,7 @@ function DocumentRow({
           </div>
         </button>
         <span>
-          <StatusBadge status={doc.status} />
+          <StatusBadge status={doc.status} done={doc.chunk_done} total={doc.chunk_total} />
         </span>
         <span className="text-center text-xs tabular-nums text-muted-foreground">{doc.chunk_count}</span>
         <span className="flex items-center justify-end gap-1 text-xs">
@@ -559,6 +568,24 @@ function DocumentRow({
           >
             <Icon name="refresh-cw" size={14} />
           </button>
+          {doc.status === 'processing' && (
+            <button
+              className="rounded p-1 text-muted-foreground hover:bg-warning/10 hover:text-warning"
+              title="暂停"
+              onClick={onPause}
+            >
+              <Icon name="pause" size={14} />
+            </button>
+          )}
+          {doc.status === 'paused' && (
+            <button
+              className="rounded p-1 text-muted-foreground hover:bg-success/10 hover:text-success"
+              title="继续"
+              onClick={onResume}
+            >
+              <Icon name="play" size={14} />
+            </button>
+          )}
           <button
             className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
             title="删除"
@@ -586,7 +613,26 @@ function DocumentRow({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, done, total }: { status: string; done?: number; total?: number }) {
+  // 入库中且已知总数：显示进度条（done/total + 百分比条），断点续传时从断点继续涨
+  if (status === 'processing' && total && total > 0) {
+    const pct = Math.round(((done ?? 0) / total) * 100);
+    return (
+      <div className="flex w-[88px] min-w-0 flex-col items-center gap-1">
+        <span className="status-pill bg-primary/10 text-primary tabular-nums">{done ?? 0}/{total}</span>
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div className="h-full bg-primary transition-all" style={{ width: `${pct}%` }} />
+        </div>
+      </div>
+    );
+  }
+  // 入库中但 total=0：还在解析/图片描述阶段（切分前未设 total），给个提示而非裸 processing
+  if (status === 'processing') {
+    return <span className="status-pill bg-primary/10 text-primary">解析中…</span>;
+  }
+  if (status === 'paused') {
+    return <span className="status-pill bg-warning/10 text-warning">已暂停</span>;
+  }
   const cls =
     status === 'ready'
       ? 'bg-success/10 text-success'
