@@ -14,16 +14,17 @@ type KnowledgeBase struct {
 }
 
 type Document struct {
-	ID         string
-	KBID       string
-	Filename   string
-	FileSize   int64
-	MimeType   string
-	Status     string // processing | ready | failed
-	ChunkCount int
-	Error      string
-	RawPath    string
-	CreatedAt  string
+	ID          string
+	KBID        string
+	Filename    string
+	FileSize    int64
+	MimeType    string
+	Status      string // processing | ready | failed | duplicate
+	ChunkCount  int
+	Error       string
+	RawPath     string
+	ContentHash string
+	CreatedAt   string
 }
 
 type Chunk struct {
@@ -117,10 +118,11 @@ func (d *DB) DeleteKB(id string) error {
 
 func (d *DB) CreateDocument(doc Document) error {
 	_, err := d.sql.Exec(`INSERT INTO documents
-		(id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		(id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		doc.ID, doc.KBID, doc.Filename, doc.FileSize, nullable(doc.MimeType),
-		doc.Status, doc.ChunkCount, nullable(doc.Error), nullable(doc.RawPath), doc.CreatedAt)
+		doc.Status, doc.ChunkCount, nullable(doc.Error), nullable(doc.RawPath),
+		nullable(doc.ContentHash), doc.CreatedAt)
 	if err == nil {
 		_ = d.refreshDocCount(doc.KBID)
 	}
@@ -128,13 +130,13 @@ func (d *DB) CreateDocument(doc Document) error {
 }
 
 func (d *DB) GetDocument(id string) (Document, error) {
-	row := d.sql.QueryRow(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,created_at
+	row := d.sql.QueryRow(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at
 		FROM documents WHERE id=?`, id)
 	return scanDocument(row)
 }
 
 func (d *DB) ListDocuments(kbID string) ([]Document, error) {
-	rows, err := d.sql.Query(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,created_at
+	rows, err := d.sql.Query(`SELECT id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,created_at
 		FROM documents WHERE kb_id=? ORDER BY created_at`, kbID)
 	if err != nil {
 		return nil, err
@@ -157,6 +159,31 @@ func (d *DB) SetDocumentStatus(id, status string, chunkCount int, errMsg string)
 	return err
 }
 
+// SetDocumentHash 记录文档内容哈希（用于入库去重）。
+func (d *DB) SetDocumentHash(id, hash string) error {
+	_, err := d.sql.Exec(`UPDATE documents SET content_hash=? WHERE id=?`, nullable(hash), id)
+	return err
+}
+
+// FindDuplicateDoc 返回同 KB 下 content_hash 相同且已就绪（ready）的文档 ID（排除
+// 自身）；无重复返回空串。用于入库前跳过重复文档。
+func (d *DB) FindDuplicateDoc(kbID, hash, excludeID string) (string, error) {
+	rows, err := d.sql.Query(
+		`SELECT id FROM documents WHERE kb_id=? AND content_hash=? AND status='ready' AND id<>? LIMIT 1`,
+		kbID, hash, excludeID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var id string
+	if rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+	}
+	return id, rows.Err()
+}
+
 func (d *DB) DeleteDocument(id string) error {
 	doc, _ := d.GetDocument(id)
 	_, err := d.sql.Exec(`DELETE FROM documents WHERE id=?`, id)
@@ -173,9 +200,9 @@ func (d *DB) DeleteChunksByDoc(docID string) error {
 
 func scanDocument(s scanner) (Document, error) {
 	var doc Document
-	var mime, errMsg, rawPath *string
+	var mime, errMsg, rawPath, contentHash *string
 	err := s.Scan(&doc.ID, &doc.KBID, &doc.Filename, &doc.FileSize, &mime,
-		&doc.Status, &doc.ChunkCount, &errMsg, &rawPath, &doc.CreatedAt)
+		&doc.Status, &doc.ChunkCount, &errMsg, &rawPath, &contentHash, &doc.CreatedAt)
 	if mime != nil {
 		doc.MimeType = *mime
 	}
@@ -184,6 +211,9 @@ func scanDocument(s scanner) (Document, error) {
 	}
 	if rawPath != nil {
 		doc.RawPath = *rawPath
+	}
+	if contentHash != nil {
+		doc.ContentHash = *contentHash
 	}
 	return doc, err
 }

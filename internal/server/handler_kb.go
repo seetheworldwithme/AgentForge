@@ -3,6 +3,8 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -378,6 +380,14 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte) 
 			_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, fmt.Sprintf("panic: %v", r))
 		}
 	}()
+	// 内容去重：同 KB 下已有内容相同（hash 一致）的 ready 文档则跳过，避免重复索引。
+	hash := sha256Hex(raw)
+	_ = h.DB.SetDocumentHash(doc.ID, hash)
+	if dupID, _ := h.DB.FindDuplicateDoc(kbID, hash, doc.ID); dupID != "" {
+		log.Printf("ingest: doc=%s skipped: duplicate of %s", doc.ID, dupID)
+		_ = h.DB.SetDocumentStatus(doc.ID, "duplicate", 0, "内容与已有文档重复，已跳过入库")
+		return
+	}
 	kb, _ := h.DB.GetKB(kbID)
 	embedClient := h.embedClientForKB(kb)
 	if embedClient == nil {
@@ -420,6 +430,12 @@ func (h *KBHandler) visionClientForKB(kb store.KnowledgeBase) llm.LLMClient {
 		}
 	}
 	return nil
+}
+
+// sha256Hex 返回字节切片的 SHA-256 十六进制摘要，用于文档内容去重。
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 func (h *KBHandler) saveUpload(kbID, docID, filename string, raw []byte) (string, error) {

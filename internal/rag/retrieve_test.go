@@ -156,3 +156,22 @@ func TestRetrieverRerankFailureFallback(t *testing.T) {
 		t.Errorf("got %+v, want c1", hits)
 	}
 }
+
+// TestGenerateSubQueries 验证 query 改写的解析：按行拆分、去编号前缀/引号、
+// 过滤与原 query 相同或过短的行、限制最多 maxSubQueries 个。
+func TestGenerateSubQueries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// 模型返回带编号 + 引号 + 一行重复原问题 + 一行过短
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"1. 召回率优化方法\n2) \"向量检索相关性\"\n原问题\nx\n"}}]}`))
+	}))
+	defer srv.Close()
+	chat := llm.NewOpenAIClient(llm.Config{BaseURL: srv.URL, Model: "m"})
+	r := &Retriever{}
+	subs, err := r.generateSubQueries(context.Background(), chat, "原问题")
+	if err != nil {
+		t.Fatalf("generateSubQueries: %v", err)
+	}
+	if len(subs) != 2 || subs[0] != "召回率优化方法" || subs[1] != "向量检索相关性" {
+		t.Errorf("got %+v, want [召回率优化方法, 向量检索相关性]", subs)
+	}
+}

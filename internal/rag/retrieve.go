@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/agent-rust/core/internal/agent"
@@ -14,13 +15,14 @@ import (
 )
 
 // Retriever implements agent.RAGRetriever over SQLite + sqlite-vec + FTS5.
-// 检索走双路：向量（语义）+ FTS5 trigram（关键词），RRF 融合后可选 rerank 重排。
-// EmbedClient/RerankClient 是全局默认；KB 级绑定的 provider 优先（保证 query/doc
-// 同模型同维度，rerank 同理）。
+// 检索流程：query 改写扩展（默认开启）→ 每个 query 向量+FTS5 双路召回 → 跨 query
+// RRF 融合 → 可选 rerank。EmbedClient/RerankClient/ChatClient 是全局默认；KB 级绑定的
+// provider 优先（保证 query/doc 同模型同维度，rerank/chat 同理）。
 type Retriever struct {
 	DB           *store.DB
 	EmbedClient  llm.LLMClient
 	RerankClient llm.RerankClient // 可选：全局默认 rerank；KB 级绑定优先
+	ChatClient   llm.LLMClient    // 可选：全局默认 chat，用于 query 改写扩展；KB 级绑定优先
 }
 
 type SearchHit struct {
@@ -35,8 +37,6 @@ type SearchHit struct {
 
 // CosineSimilarity converts an L2 distance reported by a vec0 index (on
 // normalized embeddings) to a cosine similarity in [-1, 1]: similarity = 1 - d²/2.
-// L2 and cosine are monotonic on unit vectors, so ranking is unchanged; the
-// number is just on the intuitive "higher = more relevant" scale.
 func CosineSimilarity(l2 float32) float32 { return 1 - l2*l2/2 }
 
 // candidateN 是每路召回的候选数（放大供 RRF 融合 / rerank）。
@@ -44,6 +44,9 @@ const candidateN = 20
 
 // rrfK 是 RRF 融合常数（业界经验值，平衡头部与长尾）。
 const rrfK = 60
+
+// maxSubQueries 是 query 改写扩展最多生成的子查询数。
+const maxSubQueries = 2
 
 func (r *Retriever) Retrieve(ctx context.Context, kbID, query string, k int) ([]agent.RetrievedChunk, error) {
 	hits, err := r.Search(ctx, kbID, query, k)
@@ -86,44 +89,67 @@ func (r *Retriever) rerankClientForKB(kbID string) llm.RerankClient {
 	return r.RerankClient
 }
 
-// Search 执行向量 + FTS5 双路召回，RRF 融合，可选 rerank，返回 top-k。双路召回
-// 阶段不应用相似度阈值（阈值由 agent.go 在融合/重排后统一应用，避免误删互补候选）。
+// chatClientForKB 返回 KB 绑定的 chat 客户端（用于 query 改写扩展），否则回退全局
+// 默认（可能 nil，此时跳过扩展）。
+func (r *Retriever) chatClientForKB(kbID string) llm.LLMClient {
+	if kb, err := r.DB.GetKB(kbID); err == nil && kb.ChatProviderID != "" {
+		if p, err := r.DB.GetProvider(kb.ChatProviderID); err == nil && p.ChatModel != "" {
+			return llm.NewOpenAIClient(llm.Config{
+				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
+			})
+		}
+	}
+	return r.ChatClient
+}
+
+// Search 执行 query 改写扩展 → 多 query 双路召回 → 跨 query RRF 融合 → 可选 rerank，
+// 返回 top-k。双路召回阶段不应用相似度阈值（阈值由 agent.go 在融合/重排后统一应用）。
 func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]SearchHit, error) {
 	if k <= 0 {
 		k = 5
 	}
-
-	// === 向量路 ===
 	client := r.embedClientForKB(kbID)
 	if client == nil {
 		return nil, fmt.Errorf("no embed provider configured for knowledge base")
 	}
-	vecs, err := client.Embed(ctx, []string{query})
-	if err != nil {
-		return nil, fmt.Errorf("embed query: %w", err)
-	}
-	if len(vecs) == 0 {
-		return nil, fmt.Errorf("embed query returned no vectors")
-	}
+
+	// query 改写扩展：默认开启，失败/超时回退 [query]。
+	queries := r.expandQuery(ctx, kbID, query)
+
+	// 跨 query 双路召回 + RRF 融合。原 query（queries[0]）的向量路错误致命；
+	// 子查询的错误跳过该子查询，不影响整体。
 	vecTable := store.SanitizeTableName(kbID)
-	vecHits, err := r.DB.SearchVectors(vecTable, vecs[0], candidateN)
-	if err != nil {
-		return nil, fmt.Errorf("vector search: %w", err)
+	scores := make(map[string]float64)
+	vecDist := make(map[string]float32)
+	for i, q := range queries {
+		vecHits, ftsHits, err := r.recallByQuery(ctx, client, vecTable, kbID, q)
+		if err != nil {
+			if i == 0 {
+				return nil, fmt.Errorf("embed query: %w", err)
+			}
+			log.Printf("[RAG] sub-query %q recall failed, skipped: %v", q, err)
+			continue
+		}
+		for rank, h := range vecHits {
+			scores[h.ID] += 1.0 / float64(rrfK+rank+1)
+			if _, ok := vecDist[h.ID]; !ok {
+				vecDist[h.ID] = h.Distance // 记录首次命中的距离（用于无 rerank 时的 cosine）
+			}
+		}
+		for rank, h := range ftsHits {
+			scores[h.ChunkID] += 1.0 / float64(rrfK+rank+1)
+		}
 	}
-
-	// === FTS 路（< 3 字符跳过；表不存在则降级纯向量路）===
-	ftsHits, ftsErr := r.searchFTS(kbID, query)
-	if ftsErr != nil {
-		log.Printf("[RAG] FTS search skipped (degraded to vector-only): %v", ftsErr)
-	}
-
-	// === RRF 融合 ===
-	fused := rrfFuse(vecHits, ftsHits, rrfK)
-	if len(fused) == 0 {
+	if len(scores) == 0 {
 		return nil, nil
 	}
 
-	// 取候选文本（RRF top candidateN，供 rerank）
+	// RRF 排序取 top candidateN
+	fused := make([]fusedItem, 0, len(scores))
+	for id, s := range scores {
+		fused = append(fused, fusedItem{chunkID: id, score: s})
+	}
+	sort.Slice(fused, func(i, j int) bool { return fused[i].score > fused[j].score })
 	candK := min(len(fused), candidateN)
 	candIDs := make([]string, candK)
 	for i := 0; i < candK; i++ {
@@ -138,7 +164,7 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 		chunkByID[c.ID] = c
 	}
 
-	// === 可选 rerank：失败回退 RRF 顺序 ===
+	// 可选 rerank：失败回退 RRF 顺序。rerank 用原 query（queries[0]）。
 	orderedIDs := candIDs
 	rerankScore := map[string]float32{}
 	if reranker := r.rerankClientForKB(kbID); reranker != nil {
@@ -146,7 +172,7 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 		for i, id := range candIDs {
 			docs[i] = chunkByID[id].Text
 		}
-		rr, err := reranker.Rerank(ctx, query, docs, candK)
+		rr, err := reranker.Rerank(ctx, queries[0], docs, candK)
 		if err != nil {
 			log.Printf("[RAG] rerank failed, fallback to RRF order: %v", err)
 		} else if len(rr) > 0 {
@@ -163,11 +189,7 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 		orderedIDs = orderedIDs[:k]
 	}
 
-	// === 组装 SearchHit ===
-	vecDist := make(map[string]float32, len(vecHits))
-	for _, h := range vecHits {
-		vecDist[h.ID] = h.Distance
-	}
+	// 组装 SearchHit
 	usedRerank := len(rerankScore) > 0
 	out := make([]SearchHit, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
@@ -196,6 +218,81 @@ func (r *Retriever) Search(ctx context.Context, kbID, query string, k int) ([]Se
 	return out, nil
 }
 
+// recallByQuery 对单个 query 执行向量 + FTS5 双路召回。向量路错误（embed/搜索失败）
+// 透传给调用方；FTS 路错误（表不存在等）记日志并降级为空。
+func (r *Retriever) recallByQuery(ctx context.Context, client llm.LLMClient, vecTable, kbID, query string) ([]store.VectorHit, []store.FTSHit, error) {
+	vecs, err := client.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(vecs) == 0 {
+		return nil, nil, fmt.Errorf("embed returned no vectors")
+	}
+	vecHits, err := r.DB.SearchVectors(vecTable, vecs[0], candidateN)
+	if err != nil {
+		return nil, nil, err
+	}
+	ftsHits, ftsErr := r.searchFTS(kbID, query)
+	if ftsErr != nil {
+		log.Printf("[RAG] FTS search skipped (degraded to vector-only): %v", ftsErr)
+	}
+	return vecHits, ftsHits, nil
+}
+
+// expandQuery 用 chat provider 把原 query 扩展为最多 maxSubQueries 个子查询（默认
+// 开启）。返回 [原query, 子查询...]；未配置 chat provider、失败或超时则返回 [原query]，
+// 检索退化为单 query。
+func (r *Retriever) expandQuery(ctx context.Context, kbID, query string) []string {
+	chat := r.chatClientForKB(kbID)
+	if chat == nil {
+		return []string{query}
+	}
+	qctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	subs, err := r.generateSubQueries(qctx, chat, query)
+	if err != nil {
+		log.Printf("[RAG] query expansion failed, using original only: %v", err)
+		return []string{query}
+	}
+	return append([]string{query}, subs...)
+}
+
+// generateSubQueries 让 chat 模型为检索改写出最多 maxSubQueries 个变体查询。解析按行，
+// 去除常见编号前缀/引号/空白，过滤掉与原 query 相同或过短的行。
+func (r *Retriever) generateSubQueries(ctx context.Context, chat llm.LLMClient, query string) ([]string, error) {
+	prompt := "你是查询改写助手。用户要在知识库检索下面这个问题，但原问题可能口语化、简短或带指代。" +
+		"请改写出最多 2 个更有利于检索的变体（更具体、更接近文档的正式表述），每行一个，" +
+		"不要编号、不要解释、不要重复原问题。若原问题已足够清晰，可以不输出。\n原问题：" + query
+	resp, err := chat.Chat(ctx, []llm.Message{{Role: llm.RoleUser, Content: prompt}})
+	if err != nil {
+		return nil, err
+	}
+	var subs []string
+	for _, line := range strings.Split(resp, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "0123456789.-、)）. ") // 去编号前缀
+		line = strings.TrimSpace(strings.Trim(line, "\"'“”‘’")) // 去首尾引号
+		if line == "" || line == query || utf8.RuneCountInString(line) < 2 {
+			continue
+		}
+		dup := false
+		for _, s := range subs {
+			if s == line {
+				dup = true
+				break
+			}
+		}
+		if dup {
+			continue
+		}
+		subs = append(subs, line)
+		if len(subs) >= maxSubQueries {
+			break
+		}
+	}
+	return subs, nil
+}
+
 // searchFTS 构造 FTS5 phrase 并检索；< 3 个 unicode 字符返回空（跳过），表不存在
 // 等错误透传给调用方降级为纯向量路。
 func (r *Retriever) searchFTS(kbID, query string) ([]store.FTSHit, error) {
@@ -220,22 +317,4 @@ func fts5Query(query string) (string, bool) {
 type fusedItem struct {
 	chunkID string
 	score   float64
-}
-
-// rrfFuse 用 Reciprocal Rank Fusion 融合向量路与 FTS 路：score = Σ 1/(k+rank)，
-// rank 从 1 起。某 chunk 只在一路命中时，另一路不累加（非 +∞）。
-func rrfFuse(vec []store.VectorHit, fts []store.FTSHit, kRRF int) []fusedItem {
-	scores := make(map[string]float64)
-	for rank, h := range vec {
-		scores[h.ID] += 1.0 / float64(kRRF+rank+1)
-	}
-	for rank, h := range fts {
-		scores[h.ChunkID] += 1.0 / float64(kRRF+rank+1)
-	}
-	items := make([]fusedItem, 0, len(scores))
-	for id, s := range scores {
-		items = append(items, fusedItem{chunkID: id, score: s})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].score > items[j].score })
-	return items
 }

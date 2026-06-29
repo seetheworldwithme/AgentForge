@@ -63,7 +63,14 @@ func main() {
 				BaseURL: rdef.BaseURL, APIKey: rdef.APIKey, Model: rdef.ChatModel,
 			})
 		}
-		ragRetriever = &rag.Retriever{DB: db, EmbedClient: embedClient, RerankClient: rerankClient}
+		// 默认 chat provider（可选）：用于 query 改写扩展；未配置时跳过扩展。KB 绑定的 chat 优先。
+		var chatClient llm.LLMClient
+		if cdef, err := db.GetDefaultProviderByKind("chat"); err == nil && cdef.ChatModel != "" {
+			chatClient = llm.NewOpenAIClient(llm.Config{
+				BaseURL: cdef.BaseURL, APIKey: cdef.APIKey, Model: cdef.ChatModel,
+			})
+		}
+		ragRetriever = &rag.Retriever{DB: db, EmbedClient: embedClient, RerankClient: rerankClient, ChatClient: chatClient}
 	}
 
 	router := server.NewRouter(server.Deps{

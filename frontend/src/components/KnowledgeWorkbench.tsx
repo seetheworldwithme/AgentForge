@@ -481,10 +481,12 @@ function StatusSummary({ docs }: { docs: Document[] }) {
   const processing = docs.filter((d) => d.status === 'processing').length;
   const failed = docs.filter((d) => d.status === 'failed').length;
   const ready = docs.filter((d) => d.status === 'ready').length;
+  const duplicate = docs.filter((d) => d.status === 'duplicate').length;
   return (
     <div className="mt-2 flex flex-wrap gap-1">
       <span className="status-pill bg-success/10 text-success">{ready} ready</span>
       <span className="status-pill bg-muted text-muted-foreground">{processing} processing</span>
+      {duplicate > 0 && <span className="status-pill bg-warning/10 text-warning">{duplicate} 重复</span>}
       {failed > 0 && <span className="status-pill bg-destructive/10 text-destructive">{failed} failed</span>}
     </div>
   );
@@ -570,8 +572,10 @@ function StatusBadge({ status }: { status: string }) {
       ? 'bg-success/10 text-success'
       : status === 'failed'
         ? 'bg-destructive/10 text-destructive'
-        : 'bg-muted text-muted-foreground';
-  return <span className={'status-pill ' + cls}>{status}</span>;
+        : status === 'duplicate'
+          ? 'bg-warning/10 text-warning'
+          : 'bg-muted text-muted-foreground';
+  return <span className={'status-pill ' + cls}>{status === 'duplicate' ? '重复' : status}</span>;
 }
 
 function NumberField({

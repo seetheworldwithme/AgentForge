@@ -16,7 +16,7 @@
 
 ### 知识与记忆
 
-- **RAG 知识库**：文档入库（PDF / DOCX / XLSX 等）、分层语义切分（代码块/表格保护、中文 rune 安全）、**混合检索**（sqlite-vec 向量 + FTS5 trigram 全文，RRF 融合）、可选 **rerank 重排**（Jina/Cohere 兼容），对话时按相似度阈值注入，低质量片段自动过滤。
+- **RAG 知识库**：文档入库（PDF / DOCX / XLSX 等）、分层语义切分（代码块/表格保护、中文 rune 安全）、内容去重（sha256 跳过重复文档）、**query 改写扩展 + 混合检索**（chat 模型生成子查询 → sqlite-vec 向量 + FTS5 trigram 全文，跨 query RRF 融合）、可选 **rerank 重排**（Jina/Cohere 兼容），对话时按相似度阈值注入，低质量片段自动过滤。
 - **Skills 技能系统**：全局 + 工作目录两层技能，精简索引常驻注入，模型按需 `read_skill` 加载全文，降低常驻 token 开销。
 - **项目规则**：`AGENTFORGE.md`（全局 `~/.agentforge/` + 项目根）两层规则自动注入；支持兼容导入 `CLAUDE.md` / `AGENTS.md`（可开关）。
 - **跨会话记忆**：Agent 自主记录「值得长期记住的事实」，以 markdown（frontmatter + 正文）存储，每轮对话注入记忆索引，可在设置页管理。四种类型：用户偏好 / 工作指导 / 项目约束 / 外部资源。
