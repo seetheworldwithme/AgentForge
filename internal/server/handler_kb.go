@@ -54,17 +54,35 @@ func (h *KBHandler) Routes(r chi.Router) {
 }
 
 type kbDTO struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	EmbedProvider  string `json:"embed_provider_id"`
-	ChatProvider   string `json:"chat_provider_id"`
-	RerankProvider string `json:"rerank_provider_id"`
-	IndexMode      string `json:"index_mode"`
-	ChunkSize      int    `json:"chunk_size"`
-	ChunkOverlap   int    `json:"chunk_overlap"`
-	DocCount       int    `json:"doc_count"`
-	CreatedAt      string `json:"created_at"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	EmbedProvider   string `json:"embed_provider_id"`
+	ChatProvider    string `json:"chat_provider_id"`
+	RerankProvider  string `json:"rerank_provider_id"`
+	IndexMode       string `json:"index_mode"`
+	ChunkSize       int    `json:"chunk_size"`
+	ChunkOverlap    int    `json:"chunk_overlap"`
+	DocCount        int    `json:"doc_count"`
+	ReadyCount      int    `json:"ready_count"`
+	ProcessingCount int    `json:"processing_count"`
+	FailedCount     int    `json:"failed_count"`
+	DuplicateCount  int    `json:"duplicate_count"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// kbToDTO 把 KB + 文档状态计数组装成 DTO；counts 缺省（零值）时各计数为 0。
+func kbToDTO(k store.KnowledgeBase, c store.KBStatusCount) kbDTO {
+	return kbDTO{
+		ID: k.ID, Name: k.Name, Description: k.Description,
+		EmbedProvider: k.EmbedProviderID, ChatProvider: k.ChatProviderID,
+		RerankProvider: k.RerankProviderID,
+		IndexMode:      k.IndexMode,
+		ChunkSize:      k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
+		DocCount: k.DocCount, CreatedAt: k.CreatedAt,
+		ReadyCount: c.Ready, ProcessingCount: c.Processing,
+		FailedCount: c.Failed, DuplicateCount: c.Duplicate,
+	}
 }
 
 type documentDTO struct {
@@ -107,16 +125,10 @@ func (h *KBHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	counts, _ := h.DB.MapKBStatusCounts()
 	out := make([]kbDTO, len(kbs))
 	for i, k := range kbs {
-		out[i] = kbDTO{
-			ID: k.ID, Name: k.Name, Description: k.Description,
-			EmbedProvider: k.EmbedProviderID, ChatProvider: k.ChatProviderID,
-			RerankProvider: k.RerankProviderID,
-			IndexMode: k.IndexMode,
-			ChunkSize: k.ChunkSize, ChunkOverlap: k.ChunkOverlap,
-			DocCount: k.DocCount, CreatedAt: k.CreatedAt,
-		}
+		out[i] = kbToDTO(k, counts[k.ID])
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -132,22 +144,16 @@ func (h *KBHandler) create(w http.ResponseWriter, r *http.Request) {
 		ID: "kb_" + ulid.Make().String(), Name: dto.Name, Description: dto.Description,
 		EmbedProviderID: dto.EmbedProvider, ChatProviderID: dto.ChatProvider,
 		RerankProviderID: dto.RerankProvider,
-		IndexMode: dto.IndexMode,
-		ChunkSize: dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
+		IndexMode:        dto.IndexMode,
+		ChunkSize:        dto.ChunkSize, ChunkOverlap: dto.ChunkOverlap,
 		CreatedAt: now,
 	}
 	if err := h.DB.CreateKB(kb); err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, kbDTO{
-		ID: kb.ID, Name: kb.Name, Description: kb.Description,
-		EmbedProvider: kb.EmbedProviderID, ChatProvider: kb.ChatProviderID,
-		RerankProvider: kb.RerankProviderID,
-		IndexMode: kb.IndexMode,
-		ChunkSize: kb.ChunkSize, ChunkOverlap: kb.ChunkOverlap,
-		DocCount: kb.DocCount, CreatedAt: kb.CreatedAt,
-	})
+	counts, _ := h.DB.MapKBStatusCounts()
+	writeJSON(w, http.StatusCreated, kbToDTO(kb, counts[kb.ID]))
 }
 
 func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
@@ -179,14 +185,8 @@ func (h *KBHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := h.DB.GetKB(id)
-	writeJSON(w, http.StatusOK, kbDTO{
-		ID: updated.ID, Name: updated.Name, Description: updated.Description,
-		EmbedProvider: updated.EmbedProviderID, ChatProvider: updated.ChatProviderID,
-		RerankProvider: updated.RerankProviderID,
-		IndexMode: updated.IndexMode,
-		ChunkSize: updated.ChunkSize, ChunkOverlap: updated.ChunkOverlap,
-		DocCount: updated.DocCount, CreatedAt: updated.CreatedAt,
-	})
+	counts, _ := h.DB.MapKBStatusCounts()
+	writeJSON(w, http.StatusOK, kbToDTO(updated, counts[updated.ID]))
 }
 
 func (h *KBHandler) delete(w http.ResponseWriter, r *http.Request) {

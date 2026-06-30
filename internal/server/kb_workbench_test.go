@@ -80,6 +80,17 @@ func TestKBWorkbenchEndpoints(t *testing.T) {
 		t.Fatalf("kb after PUT = %+v", kb)
 	}
 
+	// 列表应携带每个 KB 的文档状态聚合计数，供侧边栏直接展示（doc_1 为 ready）
+	kbReq, _ := http.NewRequest(http.MethodGet, "/api/kb", nil)
+	kbRec := httptest.NewRecorder()
+	router.ServeHTTP(kbRec, kbReq)
+	if kbRec.Code != http.StatusOK ||
+		!strings.Contains(kbRec.Body.String(), `"id":"kb_1"`) ||
+		!strings.Contains(kbRec.Body.String(), `"ready_count":1`) ||
+		!strings.Contains(kbRec.Body.String(), `"processing_count":0`) {
+		t.Fatalf("kb list must aggregate status counts (ready_count=1), got %s", kbRec.Body.String())
+	}
+
 	body := postJSONStatus(t, router, "/api/kb/kb_1/chunk-preview", map[string]any{
 		"text": "abcdefghijklmnop", "chunk_size": 8, "chunk_overlap": 2,
 	}, http.StatusOK)

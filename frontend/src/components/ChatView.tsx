@@ -190,7 +190,7 @@ function ChatTopBar() {
   };
 
   return (
-    <div className="flex h-10 shrink-0 items-center justify-end gap-1 border-b border-border bg-card px-3">
+    <div className="flex h-10 shrink-0 items-center justify-end gap-1 border-b border-border/60 bg-card/70 px-3 backdrop-blur-xl">
       {/* 导出弹出面板 */}
       <div ref={exportRef} className="relative">
         <button

@@ -22,12 +22,16 @@ interface KBState {
   retrieve: (kbId: string, query: string, topK: number) => Promise<void>;
 }
 
-// Poll a KB's documents every 2s until none are "processing" (capped at ~10
-// min to match the server ingest timeout), so the UI refreshes to ready/failed
-// instead of freezing on a stale "processing" badge.
+// Poll a KB until none of its documents are "processing": 刷新文档表(loadDocs) +
+// 侧边栏聚合统计(load)，让 UI 收敛到 ready/failed 而不是卡在过期的 processing。
+// 5s 间隔，无硬上限——续传/重试可能合法地超过服务端 ingest 超时；只要没有文档还
+// 处于 processing 就停止。
 function pollUntilSettled(get: () => KBState, kbId: string) {
   const tick = async () => {
     await get().loadDocs(kbId);
+    // 同步刷新 KB 列表聚合统计：侧边栏所有知识库的 ready/processing 计数
+    // 才会随入库完成实时更新，而不只是当前激活的那个。
+    await get().load();
     const docs = get().docsByKb[kbId] ?? [];
     // 续传后单文档可能跨多次 core 重启，累计远超 10min，故不设硬上限；间隔 5s。
     if (docs.some((d) => d.status === 'processing')) {

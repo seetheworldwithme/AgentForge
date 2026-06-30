@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKBStore } from '../stores/kbStore';
 import { useConfigStore } from '../stores/configStore';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { vendorLabel } from '../lib/vendors';
 import { Icon } from './Icon';
 import type { Document, KnowledgeBase } from '../types';
@@ -20,6 +21,7 @@ export function KnowledgeWorkbench() {
   const loadDocs = useKBStore((s) => s.loadDocs);
   const upload = useKBStore((s) => s.upload);
   const deleteDoc = useKBStore((s) => s.deleteDoc);
+  const confirm = useConfirmModalStore((s) => s.confirm);
   const retryDoc = useKBStore((s) => s.retryDoc);
   const pauseDoc = useKBStore((s) => s.pauseDoc);
   const resumeDoc = useKBStore((s) => s.resumeDoc);
@@ -205,7 +207,7 @@ export function KnowledgeWorkbench() {
                 <div className="mt-0.5 truncate text-xs text-muted-foreground">
                   {kb.description || '无描述'}
                 </div>
-                <StatusSummary docs={docsByKb[kb.id] ?? []} />
+                <StatusSummary kb={kb} />
               </button>
             ))
           )}
@@ -225,7 +227,16 @@ export function KnowledgeWorkbench() {
                       {active.description || '无描述'}
                     </p>
                   </div>
-                  <button className="btn-danger" onClick={() => removeKB(active.id)}>
+                  <button
+                    className="btn-danger"
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: `删除知识库「${active.name}」？`,
+                        message: '知识库及其全部文档将一并删除，操作不可恢复。',
+                      });
+                      if (ok) removeKB(active.id);
+                    }}
+                  >
                     <Icon name="trash" size={14} />
                     删除
                   </button>
@@ -300,7 +311,13 @@ export function KnowledgeWorkbench() {
                         onRetry={() => retryDoc(active.id, doc.id)}
                         onPause={() => pauseDoc(active.id, doc.id)}
                         onResume={() => resumeDoc(active.id, doc.id)}
-                        onDelete={() => deleteDoc(active.id, doc.id)}
+                        onDelete={async () => {
+                          const ok = await confirm({
+                            title: `删除文档「${doc.filename}」？`,
+                            message: '文档及其切片将一并删除，操作不可恢复。',
+                          });
+                          if (ok) deleteDoc(active.id, doc.id);
+                        }}
                       />
                     ))
                   )}
@@ -502,11 +519,11 @@ export function KnowledgeWorkbench() {
   );
 }
 
-function StatusSummary({ docs }: { docs: Document[] }) {
-  const processing = docs.filter((d) => d.status === 'processing').length;
-  const failed = docs.filter((d) => d.status === 'failed').length;
-  const ready = docs.filter((d) => d.status === 'ready').length;
-  const duplicate = docs.filter((d) => d.status === 'duplicate').length;
+function StatusSummary({ kb }: { kb: KnowledgeBase }) {
+  const ready = kb.ready_count ?? 0;
+  const processing = kb.processing_count ?? 0;
+  const failed = kb.failed_count ?? 0;
+  const duplicate = kb.duplicate_count ?? 0;
   return (
     <div className="mt-2 flex flex-wrap gap-1">
       <span className="status-pill bg-success/10 text-success">{ready} ready</span>

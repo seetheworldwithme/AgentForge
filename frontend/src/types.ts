@@ -51,6 +51,11 @@ export interface KnowledgeBase {
   chunk_size: number;
   chunk_overlap: number;
   doc_count: number;
+  // 文档状态聚合计数：由后端在 KB 列表里一并返回，列表侧边栏直接展示，无需逐个拉文档列表
+  ready_count?: number;
+  processing_count?: number;
+  failed_count?: number;
+  duplicate_count?: number;
   created_at: string;
 }
 

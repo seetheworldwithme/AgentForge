@@ -127,6 +127,45 @@ func (d *DB) DeleteKB(id string) error {
 	return err
 }
 
+// KBStatusCount 是单个知识库的文档状态计数，供列表侧边栏直接展示聚合统计。
+type KBStatusCount struct {
+	Ready      int
+	Processing int
+	Failed     int
+	Duplicate  int
+}
+
+// MapKBStatusCounts 一次聚合所有知识库的文档状态计数（ready/processing/failed/duplicate），
+// 避免前端逐个拉文档列表才能得到统计。一次 GROUP BY 查询，返回 kbID -> 计数。
+func (d *DB) MapKBStatusCounts() (map[string]KBStatusCount, error) {
+	rows, err := d.sql.Query(`SELECT kb_id, status, COUNT(*) FROM documents GROUP BY kb_id, status`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]KBStatusCount)
+	for rows.Next() {
+		var kbID, status string
+		var n int
+		if err := rows.Scan(&kbID, &status, &n); err != nil {
+			return nil, err
+		}
+		c := out[kbID]
+		switch status {
+		case "ready":
+			c.Ready = n
+		case "processing":
+			c.Processing = n
+		case "failed":
+			c.Failed = n
+		case "duplicate":
+			c.Duplicate = n
+		}
+		out[kbID] = c
+	}
+	return out, rows.Err()
+}
+
 func (d *DB) CreateDocument(doc Document) error {
 	_, err := d.sql.Exec(`INSERT INTO documents
 		(id,kb_id,filename,file_size,mime_type,status,chunk_count,error,raw_path,content_hash,chunk_done,chunk_total,created_at)

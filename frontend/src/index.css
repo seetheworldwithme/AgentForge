@@ -4,69 +4,69 @@
 
 @layer base {
   :root {
-    --radius: 0.625rem;
+    --radius: 0.75rem;
 
-    /* 亮色：slate 中性 + indigo 强调 */
-    --background: 210 40% 98%;
-    --foreground: 222 47% 11%;
+    /* 亮色：苹果中性灰 + 系统蓝 */
+    --background: 240 10% 96%;
+    --foreground: 240 6% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 222 47% 11%;
+    --card-foreground: 240 6% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222 47% 11%;
-    --primary: 243 75% 59%;
+    --popover-foreground: 240 6% 11%;
+    --primary: 211 100% 45%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 210 40% 96%;
-    --secondary-foreground: 222 47% 11%;
-    --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
-    --accent: 226 100% 97%;
-    --accent-foreground: 243 75% 45%;
-    --destructive: 0 72% 51%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 240 6% 11%;
+    --muted: 240 5% 95%;
+    --muted-foreground: 240 4% 44%;
+    --accent: 240 6% 94%;
+    --accent-foreground: 211 100% 38%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 71% 40%;
+    --success: 145 63% 42%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 45%;
+    --warning: 38 95% 51%;
     --warning-foreground: 0 0% 100%;
-    --border: 214 32% 91%;
-    --input: 214 32% 91%;
-    --ring: 243 75% 59%;
-    --sidebar: 210 33% 97%;
-    --sidebar-foreground: 222 47% 11%;
-    --sidebar-border: 214 30% 90%;
-    --sidebar-accent: 214 30% 93%;
-    --sidebar-accent-foreground: 222 47% 11%;
+    --border: 240 5% 84%;
+    --input: 240 5% 84%;
+    --ring: 211 100% 45%;
+    --sidebar: 240 10% 96%;
+    --sidebar-foreground: 240 6% 11%;
+    --sidebar-border: 240 5% 87%;
+    --sidebar-accent: 240 6% 90%;
+    --sidebar-accent-foreground: 240 6% 11%;
   }
 
   .dark {
-    /* 暗色：slate 深底 + 更亮的 indigo，对比度独立校准 */
-    --background: 224 47% 8%;
-    --foreground: 210 40% 98%;
-    --card: 222 44% 12%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 44% 13%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 239 84% 67%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 239 60% 20%;
-    --accent-foreground: 239 84% 80%;
-    --destructive: 0 63% 50%;
+    /* 暗色：苹果深灰底 + 更亮的系统蓝，对比度独立校准 */
+    --background: 240 6% 10%;
+    --foreground: 0 0% 98%;
+    --card: 240 6% 13%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 6% 14%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 211 100% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 16%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 5% 16%;
+    --muted-foreground: 240 5% 63%;
+    --accent: 240 5% 17%;
+    --accent-foreground: 211 100% 72%;
+    --destructive: 0 72% 56%;
     --destructive-foreground: 0 0% 100%;
-    --success: 142 64% 48%;
+    --success: 145 58% 50%;
     --success-foreground: 0 0% 100%;
-    --warning: 38 92% 55%;
+    --warning: 38 92% 56%;
     --warning-foreground: 0 0% 100%;
-    --border: 217 33% 22%;
-    --input: 217 33% 24%;
-    --ring: 239 84% 67%;
-    --sidebar: 222 45% 10%;
-    --sidebar-foreground: 210 40% 98%;
-    --sidebar-border: 217 33% 20%;
-    --sidebar-accent: 217 33% 16%;
-    --sidebar-accent-foreground: 210 40% 98%;
+    --border: 240 5% 20%;
+    --input: 240 5% 22%;
+    --ring: 211 100% 56%;
+    --sidebar: 240 6% 8%;
+    --sidebar-foreground: 0 0% 98%;
+    --sidebar-border: 240 5% 16%;
+    --sidebar-accent: 240 5% 16%;
+    --sidebar-accent-foreground: 0 0% 98%;
   }
 }
 
@@ -81,7 +81,9 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: 'cv11', 'ss01';
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    letter-spacing: -0.01em;
     text-rendering: optimizeLegibility;
   }
   ::selection {

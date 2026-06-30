@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { Icon } from './Icon';
 import { useRulesStore, type RuleScope } from '../stores/rulesStore';
 import { api } from '../lib/api';
@@ -11,6 +12,7 @@ export function RulesPanel() {
   const [workdir, setWorkdir] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const confirm = useConfirmModalStore((s) => s.confirm);
 
   useEffect(() => {
     load();
@@ -41,7 +43,12 @@ export function RulesPanel() {
   };
 
   const onClear = async () => {
-    if (!confirm(`清空${scope === 'global' ? '全局' : '项目'}规则？`)) return;
+    const ok = await confirm({
+      title: `清空${scope === 'global' ? '全局' : '项目'}规则？`,
+      message: '所有规则将被删除，操作不可恢复。',
+      confirmText: '清空',
+    });
+    if (!ok) return;
     setError('');
     try {
       await clear(scope);

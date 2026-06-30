@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { Icon } from './Icon';
 import { useMemoryStore } from '../stores/memoryStore';
 import type { MemoryEntry, MemoryType } from '../types';
@@ -22,6 +23,7 @@ function toDraft(e: MemoryEntry): Draft {
 
 export function MemoryPanel() {
   const { entries, loaded, load, save, remove } = useMemoryStore();
+  const confirm = useConfirmModalStore((s) => s.confirm);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -65,7 +67,11 @@ export function MemoryPanel() {
   };
 
   const del = async (name: string) => {
-    if (!confirm(`删除记忆「${name}」？`)) return;
+    const ok = await confirm({
+      title: `删除记忆「${name}」？`,
+      message: '操作不可恢复。',
+    });
+    if (!ok) return;
     await remove(name);
     if (draft?.name === name) setDraft(null);
   };

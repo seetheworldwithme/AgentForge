@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useConfigStore } from '../stores/configStore';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { api } from '../lib/api';
 import { VENDORS, vendorLabel } from '../lib/vendors';
 import { Icon } from './Icon';
@@ -32,6 +33,7 @@ export function ProviderSettings() {
   const create = useConfigStore((s) => s.create);
   const update = useConfigStore((s) => s.update);
   const remove = useConfigStore((s) => s.remove);
+  const confirm = useConfirmModalStore((s) => s.confirm);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<Form>(EMPTY);
@@ -164,6 +166,11 @@ export function ProviderSettings() {
   };
 
   const onDelete = async (id: string) => {
+    const ok = await confirm({
+      title: '删除该模型配置？',
+      message: '操作不可恢复。',
+    });
+    if (!ok) return;
     if (id === editingId) resetForm();
     await remove(id);
   };

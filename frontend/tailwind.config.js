@@ -1,6 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 // 设计令牌：颜色走 CSS 变量（HSL），令暗色模式零样板（组件写一套类名即可）。
-// 强调色 indigo，中性色 slate，字体 Plus Jakarta Sans + JetBrains Mono。
+// 强调色苹果系统蓝，中性色苹果灰阶，字体用系统字体栈（macOS 下 SF Pro）。
 export default {
   darkMode: 'class',
   content: ['./index.html', './src/**/*.{ts,tsx}'],
@@ -61,17 +61,18 @@ export default {
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
       },
+      // 字体：优先系统字体，macOS 下原生 SF Pro，Windows 下 Segoe UI，零网络加载
       fontFamily: {
         sans: [
-          '"Plus Jakarta Sans"',
           '-apple-system',
           'BlinkMacSystemFont',
+          '"SF Pro Text"',
+          '"SF Pro Display"',
           '"Segoe UI"',
           'system-ui',
           'sans-serif',
         ],
         mono: [
-          '"JetBrains Mono"',
           'ui-monospace',
           '"SF Mono"',
           'Menlo',
@@ -79,12 +80,12 @@ export default {
           'monospace',
         ],
       },
-      // slate 色调染色的阴影，明暗双主题下都自然
+      // 苹果风格：极柔和、中性、大半径的漫射阴影
       boxShadow: {
-        sm: '0 1px 2px 0 rgb(15 23 42 / 0.05)',
-        DEFAULT: '0 1px 3px 0 rgb(15 23 42 / 0.07), 0 1px 2px -1px rgb(15 23 42 / 0.05)',
-        md: '0 4px 12px -2px rgb(15 23 42 / 0.10), 0 2px 6px -2px rgb(15 23 42 / 0.06)',
-        lg: '0 16px 40px -10px rgb(15 23 42 / 0.20), 0 6px 14px -6px rgb(15 23 42 / 0.10)',
+        sm: '0 0.5px 1px 0 rgb(0 0 0 / 0.04)',
+        DEFAULT: '0 1px 3px 0 rgb(0 0 0 / 0.06), 0 1px 2px -1px rgb(0 0 0 / 0.04)',
+        md: '0 4px 16px -4px rgb(0 0 0 / 0.08), 0 2px 6px -2px rgb(0 0 0 / 0.04)',
+        lg: '0 12px 40px -8px rgb(0 0 0 / 0.16), 0 4px 12px -4px rgb(0 0 0 / 0.08)',
       },
       keyframes: {
         'fade-in': { from: { opacity: '0' }, to: { opacity: '1' } },

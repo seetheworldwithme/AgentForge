@@ -1,4 +1,4 @@
-// 内联 SVG 图标集（Lucide 风格）：零依赖、1.75px 描边、currentColor，
+// 内联 SVG 图标集（Lucide 风格）：零依赖、2px 描边、currentColor，
 // 统一 24x24 viewBox。组件内用 <Icon name="..." /> 调用。
 import type { ReactNode, SVGProps } from 'react';
 
@@ -259,7 +259,7 @@ interface IconProps extends Omit<SVGProps<SVGSVGElement>, 'name'> {
   strokeWidth?: number;
 }
 
-export function Icon({ name, size = 16, strokeWidth = 1.75, className, ...rest }: IconProps) {
+export function Icon({ name, size = 16, strokeWidth = 2, className, ...rest }: IconProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

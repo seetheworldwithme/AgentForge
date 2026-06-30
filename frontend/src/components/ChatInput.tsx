@@ -288,7 +288,7 @@ export function ChatInput({ sessionId }: { sessionId: string | null }) {
 
   return (
     <div className="px-4 pb-4 pt-2">
-      <div className="relative rounded-2xl border border-border bg-card shadow-md transition-colors focus-within:border-primary/50">
+      <div className="relative rounded-[18px] border border-border/70 bg-card shadow-sm transition-colors focus-within:border-primary/50 focus-within:shadow-md">
         {slashOpen && (
           <SlashMenu
             ref={menuRef}

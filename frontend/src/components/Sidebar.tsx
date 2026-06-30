@@ -3,6 +3,7 @@ import { useSessionStore } from '../stores/sessionStore';
 import { useConfigStore } from '../stores/configStore';
 import { useWorkDirStore } from '../stores/workdirStore';
 import { useThemeStore } from '../stores/themeStore';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { Icon, type IconName } from './Icon';
 import type { Session } from '../types';
 
@@ -73,10 +74,10 @@ export function Sidebar({
   }, [groups, workdir]);
 
   return (
-    <div className="flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar">
+    <div className="flex h-full w-64 flex-col border-r border-sidebar-border bg-sidebar/80 backdrop-blur-2xl">
       {/* 品牌区 */}
       <div className="flex items-center gap-2.5 px-4 pb-3 pt-4">
-        <div className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-foreground shadow-sm">
+        <div className="grid h-8 w-8 place-items-center rounded-[10px] bg-primary text-primary-foreground shadow-sm">
           <Icon name="sparkles" size={18} strokeWidth={2} />
         </div>
         <div className="leading-tight">
@@ -164,15 +165,12 @@ function NavItem({
     <button
       onClick={onClick}
       className={
-        'group relative flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors ' +
+        'group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium transition-colors ' +
         (active
           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
           : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground')
       }
     >
-      {active && (
-        <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary" />
-      )}
       <Icon name={icon} size={17} />
       {label}
     </button>
@@ -187,9 +185,9 @@ function SessionGroup({ dir, sessions }: { dir: string; sessions: Session[] }) {
   const remove = useSessionStore((s) => s.remove);
   const workdir = useWorkDirStore((s) => s.workdir);
   const setWorkDir = useWorkDirStore((s) => s.setWorkDir);
+  const confirm = useConfirmModalStore((s) => s.confirm);
 
   const [open, setOpen] = useState(true);
-  const [confirming, setConfirming] = useState(false);
   const basename = dir.split(/[\\/]/).filter(Boolean).pop() || dir;
 
   // 切到该目录后再新建：新对话会归属此目录（后端按当前全局目录打戳），工具也在该目录执行。
@@ -200,18 +198,20 @@ function SessionGroup({ dir, sessions }: { dir: string; sessions: Session[] }) {
 
   // 删除整个目录分组：移除其下全部对话；若正是当前目录则清空，使空的当前分组也消失。
   const onDelete = async () => {
+    const ok = await confirm({
+      title: `删除目录「${basename}」下的全部对话？`,
+      message: `将删除 ${sessions.length} 个对话，操作不可恢复。`,
+    });
+    if (!ok) return;
     for (const s of sessions) {
       await remove(s.id);
     }
     if (dir === workdir) {
       await setWorkDir('');
     }
-    setConfirming(false);
   };
 
-  const toggle = () => {
-    if (!confirming) setOpen((o) => !o);
-  };
+  const toggle = () => setOpen((o) => !o);
 
   return (
     <div className="mb-0.5">
@@ -231,61 +231,35 @@ function SessionGroup({ dir, sessions }: { dir: string; sessions: Session[] }) {
           className="shrink-0 text-muted-foreground/70"
         />
         <span className="flex-1 truncate">{dir ? basename : '未分组'}</span>
-        {confirming ? (
-          <span className="flex items-center gap-0.5">
-            <span className="mr-0.5 text-[10px] text-destructive">删除全部?</span>
-            <button
-              className="rounded p-0.5 text-destructive hover:bg-destructive/10"
-              title="确认删除"
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Icon name="check" size={13} strokeWidth={2.5} />
-            </button>
-            <button
-              className="rounded p-0.5 hover:bg-sidebar hover:text-foreground"
-              title="取消"
-              onClick={(e) => {
-                e.stopPropagation();
-                setConfirming(false);
-              }}
-            >
-              <Icon name="x" size={13} strokeWidth={2.5} />
-            </button>
-          </span>
-        ) : (
-          <span className="flex items-center gap-0.5">
-            {dir && (
-              <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                <button
-                  className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-primary"
-                  title="在此目录新建对话"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onNew();
-                  }}
-                >
-                  <Icon name="plus" size={13} strokeWidth={2.25} />
-                </button>
-                <button
-                  className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-destructive"
-                  title="删除该目录下全部对话"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setConfirming(true);
-                  }}
-                >
-                  <Icon name="trash" size={13} />
-                </button>
-              </span>
-            )}
-            <span className="ml-0.5 text-[10px] tabular-nums text-muted-foreground/70">
-              {sessions.length}
+        <span className="flex items-center gap-0.5">
+          {dir && (
+            <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+              <button
+                className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-primary"
+                title="在此目录新建对话"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNew();
+                }}
+              >
+                <Icon name="plus" size={13} strokeWidth={2.25} />
+              </button>
+              <button
+                className="rounded p-0.5 text-muted-foreground hover:bg-sidebar hover:text-destructive"
+                title="删除该目录下全部对话"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete();
+                }}
+              >
+                <Icon name="trash" size={13} />
+              </button>
             </span>
+          )}
+          <span className="ml-0.5 text-[10px] tabular-nums text-muted-foreground/70">
+            {sessions.length}
           </span>
-        )}
+        </span>
       </div>
       {open &&
         sessions.map((s) => <SessionRow key={s.id} session={s} active={s.id === currentId} />)}
@@ -297,6 +271,7 @@ function SessionRow({ session, active }: { session: Session; active: boolean }) 
   const select = useSessionStore((s) => s.select);
   const remove = useSessionStore((s) => s.remove);
   const rename = useSessionStore((s) => s.rename);
+  const confirm = useConfirmModalStore((s) => s.confirm);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(session.title);
 
@@ -343,16 +318,13 @@ function SessionRow({ session, active }: { session: Session; active: boolean }) 
   return (
     <div
       className={
-        'group relative flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-sm transition-colors ' +
+        'group relative flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors ' +
         (active
           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
           : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/50')
       }
       onClick={() => select(session.id)}
     >
-      {active && (
-        <span className="absolute bottom-1.5 left-0 top-1.5 w-0.5 rounded-full bg-primary" />
-      )}
       <span className={'flex-1 truncate ' + (active ? 'font-medium' : '')}>{session.title}</span>
       <button
         className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar hover:text-foreground group-hover:opacity-100"
@@ -364,8 +336,13 @@ function SessionRow({ session, active }: { session: Session; active: boolean }) 
       <button
         className="rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-sidebar hover:text-destructive group-hover:opacity-100"
         title="删除"
-        onClick={(e) => {
+        onClick={async (e) => {
           e.stopPropagation();
+          const ok = await confirm({
+            title: '删除该对话？',
+            message: '对话及其消息将一并删除，操作不可恢复。',
+          });
+          if (!ok) return;
           remove(session.id);
         }}
       >

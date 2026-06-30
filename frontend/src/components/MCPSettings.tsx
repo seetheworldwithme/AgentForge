@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useConfirmModalStore } from '../stores/confirmModalStore';
 import { api } from '../lib/api';
 import type { MCPServer } from '../types';
 import { Icon } from './Icon';
@@ -28,6 +29,7 @@ export function MCPSettings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const confirm = useConfirmModalStore((s) => s.confirm);
 
   const editing = servers.find((server) => server.id === editingId) ?? null;
 
@@ -77,7 +79,12 @@ export function MCPSettings() {
     setStatus({ kind: 'idle' });
   };
 
-  const removeServer = (id: string) => {
+  const removeServer = async (id: string) => {
+    const ok = await confirm({
+      title: '删除该 MCP 服务？',
+      message: '保存配置后生效，操作不可恢复。',
+    });
+    if (!ok) return;
     setServers((items) => items.filter((item) => item.id !== id));
     if (editingId === id) setEditingId(null);
     setStatus({ kind: 'idle' });
