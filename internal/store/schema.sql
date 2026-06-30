@@ -109,3 +109,14 @@ CREATE TABLE IF NOT EXISTS embedding_cache (
     created_at TEXT NOT NULL,
     PRIMARY KEY (model, text_hash)
 );
+
+-- 图片描述缓存：按 (model, image_hash) 复用 VLM 对图片的文字描述。图片描述阶段没有
+-- leaf 进度，慢模型/大文档下整文档 ctx 超时后会从头重来；此缓存让已描述过的图片下次
+-- 直接复用，使入库可跨次收敛（不再死循环）。image_hash 取压缩后图片字节的 sha256。
+CREATE TABLE IF NOT EXISTS image_desc_cache (
+    model      TEXT NOT NULL,
+    image_hash TEXT NOT NULL,
+    desc_text  TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (model, image_hash)
+);

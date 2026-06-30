@@ -7,14 +7,23 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"image"
+	"image/color"
+	"image/jpeg"
+	_ "image/gif"
+	_ "image/png"
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/agent-rust/core/internal/llm"
 	"github.com/agent-rust/core/internal/rag/parser"
 	"github.com/agent-rust/core/internal/store"
 	"github.com/oklog/ulid/v2"
+	"golang.org/x/image/draw"
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/tiff"
 )
 
 // Ingestor parses, chunks, embeds (batched), and stores a document.
@@ -23,12 +32,16 @@ type Ingestor struct {
 	Embed      llm.LLMClient
 	Vision     llm.LLMClient // 可选，用于把图片描述成文字（VLM）；nil 时图片跳过
 	Chat       llm.LLMClient // 可选，用于 QA 索引生成 + 摘要索引生成；nil 时跳过
-	KBID       string
-	EmbedModel string // embedding 模型名，用作缓存 key（不同模型维度不同）
-	IndexMode  string // chunk | qa；空视为 chunk
+	KBID        string
+	EmbedModel  string // embedding 模型名，用作缓存 key（不同模型维度不同）
+	VisionModel string // VLM 模型名，用作图片描述缓存 key（不同模型描述不同）
+	IndexMode   string // chunk | qa；空视为 chunk
 	ChunkSz    int
 	Overlap    int
 	Parser     parser.Parser // the chosen parser for the file
+	// visionImageTimeout 是单张图片 VLM 描述的超时，避免一张大图/慢模型卡死整文档；
+	// 零值用 defaultVisionImageTimeout。非导出，仅供测试注入。
+	visionImageTimeout time.Duration
 }
 
 // IngestFile parses, chunks, embeds (batched), and stores a document. Every
@@ -275,17 +288,17 @@ func (ing *Ingestor) overlap() int {
 func vecTable(kbID string) string { return store.SanitizeTableName(kbID) }
 func ftsTable(kbID string) string { return store.FTSTableName(kbID) }
 
-// hashText 返回文本的 SHA-256 十六进制摘要，用作 embedding 缓存的 text_hash key。
-func hashText(s string) string {
-	sum := sha256.Sum256([]byte(s))
+// hashBytes 返回字节的 SHA-256 十六进制摘要。
+func hashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
-// 单文档最多描述这么多张图片，超出跳过（避免大文档把 VLM 打爆）。
-const maxImagesPerDoc = 20
+// hashText 返回文本的 SHA-256 十六进制摘要，用作 embedding 缓存的 text_hash key。
+func hashText(s string) string { return hashBytes([]byte(s)) }
 
 // fillImagePlaceholders 把 ParseResult 里的图片占位符替换成 VLM 描述（按位置）。
-// 没配 Vision、图片数超限或单图描述失败时，对应占位符替换为空（图片跳过）。
+// 没配 Vision 或单图描述失败时，对应占位符替换为空（图片跳过）。
 func (ing *Ingestor) fillImagePlaceholders(ctx context.Context, docID string, res parser.ParseResult) string {
 	if len(res.Images) == 0 {
 		return parser.ReplacePlaceholders(res.Text, func(int) string { return "" })
@@ -308,11 +321,8 @@ func (ing *Ingestor) describeImages(ctx context.Context, docID string, imgs []pa
 		return descs
 	}
 	n := len(imgs)
-	if n > maxImagesPerDoc {
-		log.Printf("ingest: doc=%s has %d images, describing first %d only", docID, n, maxImagesPerDoc)
-		n = maxImagesPerDoc
-	}
-	// 限制 VLM 并发（4）：一次 20 张并发易触发 provider 限流，反而整体更慢。
+	log.Printf("ingest: doc=%s describing %d images", docID, n)
+	// 限制 VLM 并发（4）：一次性全量并发易触发 provider 限流，反而整体更慢。
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	done := 0
@@ -340,7 +350,27 @@ func (ing *Ingestor) describeImages(ctx context.Context, docID string, imgs []pa
 }
 
 func (ing *Ingestor) describeOneImage(ctx context.Context, img parser.ParsedImage) (string, error) {
-	dataURL := "data:" + img.MIME + ";base64," + base64.StdEncoding.EncodeToString(img.Data)
+	// 发送前压缩：原始大图会让视觉 token 暴涨、撑爆慢模型的显存/请求体限制，
+	// 触发 400 或长时间挂起。统一缩放 + 重编码为 JPEG（MIME 一定正确、字节可控）。
+	data, err := prepareImageForVision(img.Data)
+	if err != nil {
+		return "", fmt.Errorf("prepare image: %w", err)
+	}
+	// 缓存命中（按 model + 压缩后图片 hash）：慢模型/大文档跨次入库时直接复用，不再重调 VLM。
+	hash := hashBytes(data)
+	if desc, ok, err := ing.DB.GetImageDesc(ing.VisionModel, hash); err != nil {
+		log.Printf("ingest: image desc cache read failed (falling back to VLM): %v", err)
+	} else if ok {
+		return desc, nil
+	}
+	dataURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data)
+	// 单图超时：避免一张图（大图/慢模型）卡死整个文档入库；超时则该图跳过。
+	timeout := ing.visionImageTimeout
+	if timeout <= 0 {
+		timeout = defaultVisionImageTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	// 让 VLM 转录图片里的全部文字内容（而非概括），这样代码/配置/表格等
 	// 细节能进 RAG 被检索到；只有纯示意图才做简要说明。
 	prompt := "请提取这张图片的全部内容，用于知识库检索：\n" +
@@ -348,11 +378,19 @@ func (ing *Ingestor) describeOneImage(ctx context.Context, img parser.ParsedImag
 		"保持原文顺序与结构，代码用 ``` 代码块、表格用 Markdown 表格，不要概括或改写；\n" +
 		"2. 若图片是流程图/示意图/照片、文字很少，则简要说明其关键信息（节点、流程、关系、场景）；\n" +
 		"3. 只输出内容本身，不要加任何前言或解释。"
-	return ing.Vision.Chat(ctx, []llm.Message{{
+	desc, err := ing.Vision.Chat(ctx, []llm.Message{{
 		Role:    llm.RoleUser,
 		Content: prompt,
 		Images:  []llm.ImageRef{{DataURL: dataURL}},
 	}})
+	if err != nil {
+		return "", err
+	}
+	// 写缓存（失败仅记日志；model/hash/描述为空时 PutImageDesc 自身不写）。
+	if err := ing.DB.PutImageDesc(ing.VisionModel, hash, desc); err != nil {
+		log.Printf("ingest: image desc cache write failed: %v", err)
+	}
+	return desc, nil
 }
 
 // qaPair 是 QA 索引模式生成的一个问答对。
@@ -397,4 +435,87 @@ func (ing *Ingestor) generateSummary(ctx context.Context, docID, text string) st
 		return ""
 	}
 	return strings.TrimSpace(resp)
+}
+
+// 图片发送给 VLM 前的预处理参数：
+//   - 长边超过 visionImageMaxDim 则等比缩小（Qwen-VL 等视觉 token 随分辨率增长，
+//     大图会撑爆显存/请求体）。1568 ≈ OpenAI vision high-detail 单 tile 上限。
+//   - 像素超过 visionImageMaxPixels 则直接跳过（只读 header 判定），避免 4 并发解码
+//     超大原图（单张可达 GB 级）撑爆内存。
+//   - 重编码 JPEG 后字节超过 visionImageMaxBytes 则逐步降质量，仍超标再缩一档。
+//   - defaultVisionImageTimeout：单图描述超时，避免一张图卡死整文档。
+const (
+	visionImageMaxDim         = 1568
+	visionImageMaxBytes       = 2 << 20 // 2MiB
+	visionImageMaxPixels      = 50_000_000
+	defaultVisionImageTimeout = 90 * time.Second
+)
+
+// prepareImageForVision 把解析出的原始图片处理成 VLM 友好的形态：自动嗅探格式解码
+// （不依赖可能失真的 MIME）→ 长边超限则等比缩小 → 统一重编码为 JPEG。失败返回 error，
+// 由调用方跳过该图（字节损坏/格式不支持/过大的图发出去也大概率 400）。
+func prepareImageForVision(data []byte) ([]byte, error) {
+	// 先嗅探尺寸（只读 header，不分配像素）：超大图直接跳过，避免并发解码撑爆内存。
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode image config: %w", err)
+	}
+	if cfg.Width*cfg.Height > visionImageMaxPixels {
+		return nil, fmt.Errorf("image too large to process: %dx%d", cfg.Width, cfg.Height)
+	}
+	src, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("decode image: %w", err)
+	}
+	scaled := scaleDown(src, visionImageMaxDim)
+	// 降质量循环：先高质量，字节超标则降质量，最终兜底再缩一档。
+	for _, q := range []int{85, 70, 55} {
+		b, err := encodeJPEGOnWhite(scaled, q)
+		if err != nil {
+			return nil, err
+		}
+		if len(b) <= visionImageMaxBytes {
+			return b, nil
+		}
+	}
+	// 最低质量仍超标：长边再砍一半后编码一次（极端大图兜底）。
+	return encodeJPEGOnWhite(scaleDown(scaled, visionImageMaxDim/2), 55)
+}
+
+// scaleDown 把图片等比缩小到长边不超过 maxDim（只缩不放），返回归一化到 (0,0) 的图像。
+func scaleDown(src image.Image, maxDim int) image.Image {
+	b := src.Bounds()
+	w, h := b.Dx(), b.Dy()
+	if w <= maxDim && h <= maxDim {
+		if b.Min.X == 0 && b.Min.Y == 0 {
+			return src
+		}
+		// 归一化到 (0,0)，保证输出 bounds 恒从原点起（与下游 encodeJPEGOnWhite 解耦）。
+		dst := image.NewRGBA(image.Rect(0, 0, w, h))
+		draw.Draw(dst, dst.Bounds(), src, b.Min, draw.Src)
+		return dst
+	}
+	var nw, nh int
+	if w >= h {
+		nw, nh = maxDim, max(1, h*maxDim/w)
+	} else {
+		nh, nw = maxDim, max(1, w*maxDim/h)
+	}
+	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
+	return dst
+}
+
+// encodeJPEGOnWhite 把 src 合成到白底（JPEG 不支持 alpha，避免透明区域变黑）后，
+// 归一化到 (0,0) 再按指定质量编码为 JPEG。
+func encodeJPEGOnWhite(src image.Image, quality int) ([]byte, error) {
+	b := src.Bounds()
+	rgba := image.NewRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	draw.Draw(rgba, rgba.Bounds(), &image.Uniform{C: color.White}, image.Point{}, draw.Src)
+	draw.Draw(rgba, rgba.Bounds(), src, b.Min, draw.Over)
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, rgba, &jpeg.Options{Quality: quality}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }

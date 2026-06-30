@@ -454,13 +454,13 @@ func (h *KBHandler) ingestDocument(kbID string, doc store.Document, raw []byte, 
 		_ = h.DB.SetDocumentStatus(doc.ID, "failed", 0, "no embed provider configured")
 		return
 	}
-	chatClient := h.visionClientForKB(kb) // KB chat provider：VLM 图片描述 + QA/摘要生成
+	chatClient, chatModel := h.visionClientForKB(kb) // KB chat provider：VLM 图片描述 + QA/摘要生成
 	ing := &rag.Ingestor{
 		DB: h.DB, Embed: embedClient, KBID: kbID, EmbedModel: embedModel,
 		Chat: chatClient, IndexMode: kb.IndexMode,
 		ChunkSz: kb.ChunkSize, Overlap: kb.ChunkOverlap,
 		Parser: pickParser(doc.Filename, doc.MimeType),
-		Vision: chatClient,
+		Vision: chatClient, VisionModel: chatModel,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	h.ingestCancel.Store(doc.ID, context.CancelFunc(cancel))
@@ -524,17 +524,17 @@ func (h *KBHandler) embedClientForKB(kb store.KnowledgeBase) (llm.LLMClient, str
 	return h.EmbedClient, h.EmbedModel
 }
 
-// visionClientForKB 返回 KB 绑定的 chat（含 VL）模型客户端，用于把文档图片
-// 描述成文字（VLM）。没配 chat_provider 时返回 nil（图片跳过）。
-func (h *KBHandler) visionClientForKB(kb store.KnowledgeBase) llm.LLMClient {
+// visionClientForKB 返回 KB 绑定的 chat（含 VL）模型客户端 + 模型名，用于把文档图片
+// 描述成文字（VLM）。没配 chat_provider 时返回 (nil, "")（图片跳过）。
+func (h *KBHandler) visionClientForKB(kb store.KnowledgeBase) (llm.LLMClient, string) {
 	if kb.ChatProviderID != "" {
 		if p, err := h.DB.GetProvider(kb.ChatProviderID); err == nil && p.ChatModel != "" {
 			return llm.NewOpenAIClient(llm.Config{
 				BaseURL: p.BaseURL, APIKey: p.APIKey, Model: p.ChatModel,
-			})
+			}), p.ChatModel
 		}
 	}
-	return nil
+	return nil, ""
 }
 
 // sha256Hex 返回字节切片的 SHA-256 十六进制摘要，用于文档内容去重。
